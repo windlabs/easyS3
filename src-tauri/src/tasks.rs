@@ -89,7 +89,7 @@ pub struct DownloadJob {
     pub dest: PathBuf,
 }
 
-/// 重试所需的原始参数（客户端快照：任务与项目解耦，切换/删除项目不中断）
+/// 重试所需的原始参数（客户端快照：任务与连接解耦，切换/删除连接不中断）
 #[derive(Clone)]
 pub enum RetryJob {
     Upload {

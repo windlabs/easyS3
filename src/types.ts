@@ -2,7 +2,7 @@
 
 import { uuid } from "./utils";
 
-export interface ProjectConfig {
+export interface ConnectionConfig {
   id: string;
   name: string;
   endpoint_url: string;
@@ -14,8 +14,8 @@ export interface ProjectConfig {
 }
 
 export interface StateDto {
-  projects: ProjectConfig[];
-  current_project_id: string | null;
+  connections: ConnectionConfig[];
+  current_connection_id: string | null;
 }
 
 export interface Entry {
@@ -78,7 +78,7 @@ export type PreviewData =
   | { kind: "text"; content: string }
   | { kind: "image"; mime: string; data_base64: string };
 
-export function blankProject(): ProjectConfig {
+export function blankConnection(): ConnectionConfig {
   return {
     id: uuid(),
     name: "",

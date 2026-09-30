@@ -4,7 +4,7 @@
 //! 可独立 `cargo test` / `cargo clippy` 验证。Tauri 胶水层在 `src-tauri`。
 //!
 //! 规格对应关系：
-//! - `config`  <- `.agents/project-config.md`
+//! - `config`  <- `.agents/connection-config.md`
 //! - `list` / `upload` / `download` / `delete` / `preview` <- `.agents/s3-operations.md`
 //! - `error`   <- `.agents/s3-operations.md` 错误分类规范
 

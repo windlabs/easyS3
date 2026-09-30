@@ -10,22 +10,22 @@ import type {
   Entry,
   FsItem,
   PreviewData,
-  ProjectConfig,
+  ConnectionConfig,
   UploadPlan,
 } from "./types";
 import { errorMessage, formatBytes } from "./utils";
 import Breadcrumb from "./components/Breadcrumb.vue";
 import ObjectTable from "./components/ObjectTable.vue";
 import TaskCenter from "./components/TaskCenter.vue";
-import ProjectDialog from "./components/ProjectDialog.vue";
+import ConnectionDialog from "./components/ConnectionDialog.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import ConflictDialog from "./components/ConflictDialog.vue";
 import PreviewModal from "./components/PreviewModal.vue";
 import Toast from "./components/Toast.vue";
 
-// ---------- 项目对话框 ----------
-const showProjectDialog = ref(false);
-const editingProject = ref<ProjectConfig | null>(null);
+// ---------- 连接对话框 ----------
+const showConnectionDialog = ref(false);
+const editingConnection = ref<ConnectionConfig | null>(null);
 
 // ---------- 上传确认 ----------
 const showUploadConfirm = ref(false);
@@ -62,7 +62,7 @@ onMounted(async () => {
   try {
     await store.refreshState();
     await store.initTasks();
-    if (store.currentProject()) await store.enterProject();
+    if (store.currentConnection()) await store.enterConnection();
   } catch (e) {
     store.toast(errorMessage(e), "error");
   }
@@ -78,21 +78,21 @@ onMounted(async () => {
   });
 });
 
-// ---------- 项目 ----------
+// ---------- 连接 ----------
 
-function openProjectDialog(project: ProjectConfig | null) {
-  editingProject.value = project;
-  showProjectDialog.value = true;
+function openConnectionDialog(connection: ConnectionConfig | null) {
+  editingConnection.value = connection;
+  showConnectionDialog.value = true;
 }
 
-async function onProjectChanged() {
+async function onConnectionChanged() {
   await store.refreshState();
-  await store.enterProject();
+  await store.enterConnection();
 }
 
-function onProjectSelect(e: Event) {
+function onConnectionSelect(e: Event) {
   const id = (e.target as HTMLSelectElement).value;
-  if (id) void store.switchProject(id);
+  if (id) void store.switchConnection(id);
 }
 
 // ---------- 上传 ----------
@@ -233,23 +233,23 @@ async function copyKey(entry: Entry) {
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">easyS3</div>
-      <div class="project-box">
+      <div class="connection-box">
         <select
           class="select"
-          :value="store.app.currentProjectId ?? ''"
-          @change="onProjectSelect"
+          :value="store.app.currentConnectionId ?? ''"
+          @change="onConnectionSelect"
         >
-          <option value="" disabled>选择项目…</option>
-          <option v-for="p in store.app.projects" :key="p.id" :value="p.id">
+          <option value="" disabled>选择连接…</option>
+          <option v-for="p in store.app.connections" :key="p.id" :value="p.id">
             {{ p.name }}
           </option>
         </select>
-        <div class="project-actions">
-          <button class="btn sm" @click="openProjectDialog(null)">新建项目</button>
+        <div class="connection-actions">
+          <button class="btn sm" @click="openConnectionDialog(null)">新建连接</button>
           <button
             class="btn sm"
-            :disabled="!store.app.currentProjectId"
-            @click="openProjectDialog(store.currentProject())"
+            :disabled="!store.app.currentConnectionId"
+            @click="openConnectionDialog(store.currentConnection())"
           >
             编辑
           </button>
@@ -260,7 +260,7 @@ async function copyKey(entry: Entry) {
         <div v-if="store.browse.loading" class="muted pad">加载中…</div>
         <template v-else>
           <div v-if="!store.browse.buckets.length" class="muted pad">
-            暂无桶。若账号无 ListBuckets 权限，可在项目设置中填写限定桶。
+            暂无桶。若账号无 ListBuckets 权限，可在连接设置中填写限定桶。
           </div>
           <a
             v-for="b in store.browse.buckets"
@@ -278,18 +278,18 @@ async function copyKey(entry: Entry) {
     <main class="main">
       <div v-if="!store.app.loaded" class="center muted">加载中…</div>
 
-      <div v-else-if="!store.app.projects.length" class="center">
-        <div class="empty-title">还没有项目</div>
+      <div v-else-if="!store.app.connections.length" class="center">
+        <div class="empty-title">还没有连接</div>
         <p class="muted">
-          项目 = 一条 S3 服务配置（endpoint、访问密钥等），支持配置多个并随时切换。
+          连接 = 一条 S3 服务配置（endpoint、访问密钥等），支持配置多个并随时切换。
         </p>
-        <button class="btn primary" @click="openProjectDialog(null)">
-          新建项目
+        <button class="btn primary" @click="openConnectionDialog(null)">
+          新建连接
         </button>
       </div>
 
       <div v-else-if="store.browse.mode === 'empty'" class="center">
-        <div class="empty-title">请选择左侧项目</div>
+        <div class="empty-title">请选择左侧连接</div>
       </div>
 
       <template v-else>
@@ -345,11 +345,11 @@ async function copyKey(entry: Entry) {
 
     <TaskCenter />
 
-    <ProjectDialog
-      v-model="showProjectDialog"
-      :project="editingProject"
-      @saved="onProjectChanged"
-      @deleted="onProjectChanged"
+    <ConnectionDialog
+      v-model="showConnectionDialog"
+      :connection="editingConnection"
+      @saved="onConnectionChanged"
+      @deleted="onConnectionChanged"
     />
 
     <ConfirmDialog
@@ -415,18 +415,18 @@ async function copyKey(entry: Entry) {
   font-weight: 700;
   letter-spacing: 0.5px;
 }
-.project-box {
+.connection-box {
   padding: 0 12px 12px;
 }
-.project-box .select {
+.connection-box .select {
   width: 100%;
   margin-bottom: 8px;
 }
-.project-actions {
+.connection-actions {
   display: flex;
   gap: 6px;
 }
-.project-actions .btn {
+.connection-actions .btn {
   flex: 1;
 }
 .bucket-list {

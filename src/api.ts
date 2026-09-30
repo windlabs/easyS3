@@ -4,7 +4,7 @@ import type {
   FsItem,
   ListResult,
   PreviewData,
-  ProjectConfig,
+  ConnectionConfig,
   StateDto,
   TaskInfo,
   UploadPlan,
@@ -13,13 +13,13 @@ import type {
 // 命令参数一律使用与 Rust 参数名完全一致的键（均为单词，规避大小写转换问题）
 
 export const getState = () => invoke<StateDto>("get_state");
-export const saveProject = (project: ProjectConfig) =>
-  invoke<void>("save_project", { project });
-export const deleteProject = (id: string) => invoke<void>("delete_project", { id });
-export const setCurrentProject = (id: string) =>
-  invoke<void>("set_current_project", { id });
-export const testProjectConnection = (project: ProjectConfig) =>
-  invoke<void>("test_project_connection", { project });
+export const saveConnection = (connection: ConnectionConfig) =>
+  invoke<void>("save_connection", { connection });
+export const deleteConnection = (id: string) => invoke<void>("delete_connection", { id });
+export const setCurrentConnection = (id: string) =>
+  invoke<void>("set_current_connection", { id });
+export const testConnection = (connection: ConnectionConfig) =>
+  invoke<void>("test_connection", { connection });
 
 export const listBuckets = () => invoke<string[]>("list_buckets");
 export const listObjects = (bucket: string, prefix: string, token: string | null) =>

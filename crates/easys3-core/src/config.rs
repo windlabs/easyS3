@@ -1,5 +1,5 @@
-//! 项目配置：数据模型、校验、存储与损坏恢复。
-//! 规格：`.agents/project-config.md`。
+//! 连接配置：数据模型、校验、存储与损坏恢复。
+//! 规格：`.agents/connection-config.md`。
 
 use crate::error::CoreError;
 use serde::{Deserialize, Serialize};
@@ -12,10 +12,10 @@ fn default_true() -> bool {
     true
 }
 
-/// 项目 = 一条 S3 服务配置（扁平列表，无分组层级，规格硬性约束）。
+/// 连接 = 一条 S3 服务配置（扁平列表，无分组层级，规格硬性约束）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct ProjectConfig {
+pub struct ConnectionConfig {
     /// UUID，创建时生成，重命名不变
     pub id: String,
     /// 显示名，非空且全局唯一
@@ -28,38 +28,38 @@ pub struct ProjectConfig {
     /// 默认 true（内部以 S3 兼容服务为主）
     #[serde(default = "default_true")]
     pub force_path_style: bool,
-    /// 可选；限定单桶项目（AK 无 ListBuckets 权限时使用）
+    /// 可选；限定单桶连接（AK 无 ListBuckets 权限时使用）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_bucket: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectsFile {
+pub struct ConnectionsFile {
     pub version: u32,
     #[serde(default)]
-    pub projects: Vec<ProjectConfig>,
+    pub connections: Vec<ConnectionConfig>,
     #[serde(default)]
-    pub current_project_id: Option<String>,
+    pub current_connection_id: Option<String>,
 }
 
-impl Default for ProjectsFile {
+impl Default for ConnectionsFile {
     fn default() -> Self {
-        ProjectsFile {
+        ConnectionsFile {
             version: 1,
-            projects: Vec::new(),
-            current_project_id: None,
+            connections: Vec::new(),
+            current_connection_id: None,
         }
     }
 }
 
 /// 加载配置；文件不存在返回空配置；JSON 损坏时备份原文件后返回空配置（不得静默清空）。
-pub fn load_projects(path: &Path) -> Result<ProjectsFile, CoreError> {
+pub fn load_connections(path: &Path) -> Result<ConnectionsFile, CoreError> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(ProjectsFile::default()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(ConnectionsFile::default()),
         Err(e) => return Err(CoreError::io(format!("读取配置失败 {}", path.display()), e)),
     };
-    match serde_json::from_str::<ProjectsFile>(&text) {
+    match serde_json::from_str::<ConnectionsFile>(&text) {
         Ok(f) => Ok(f),
         Err(_) => {
             let ts = SystemTime::now()
@@ -69,16 +69,16 @@ pub fn load_projects(path: &Path) -> Result<ProjectsFile, CoreError> {
             let file_name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "projects.json".to_string());
+                .unwrap_or_else(|| "connections.json".to_string());
             let backup = path.with_file_name(format!("{file_name}.bak.{ts}"));
             let _ = fs::rename(path, &backup);
-            Ok(ProjectsFile::default())
+            Ok(ConnectionsFile::default())
         }
     }
 }
 
 /// 原子写入（先写临时文件再 rename），Unix 下权限 0600（仅当前用户可读）。
-pub fn save_projects(path: &Path, file: &ProjectsFile) -> Result<(), CoreError> {
+pub fn save_connections(path: &Path, file: &ConnectionsFile) -> Result<(), CoreError> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
             .map_err(|e| CoreError::io(format!("创建配置目录失败 {}", dir.display()), e))?;
@@ -98,8 +98,11 @@ pub fn save_projects(path: &Path, file: &ProjectsFile) -> Result<(), CoreError> 
     Ok(())
 }
 
-/// 校验规则：`.agents/project-config.md`「校验规则」。others 为现有项目列表（编辑时排除自身）。
-pub fn validate_project(p: &ProjectConfig, others: &[ProjectConfig]) -> Result<(), Vec<String>> {
+/// 校验规则：`.agents/connection-config.md`「校验规则」。others 为现有连接列表（编辑时排除自身）。
+pub fn validate_connection(
+    p: &ConnectionConfig,
+    others: &[ConnectionConfig],
+) -> Result<(), Vec<String>> {
     let mut errs: Vec<String> = Vec::new();
     if p.name.trim().is_empty() {
         errs.push("名称不能为空".to_string());
@@ -159,8 +162,8 @@ pub fn is_valid_bucket_name(name: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn sample() -> ProjectConfig {
-        ProjectConfig {
+    fn sample() -> ConnectionConfig {
+        ConnectionConfig {
             id: "id-1".to_string(),
             name: "测试服务".to_string(),
             endpoint_url: "https://s3.example.com".to_string(),
@@ -175,31 +178,31 @@ mod tests {
     #[test]
     fn save_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("projects.json");
-        let mut file = ProjectsFile::default();
-        file.projects.push(sample());
-        file.current_project_id = Some("id-1".to_string());
-        save_projects(&path, &file).unwrap();
-        let loaded = load_projects(&path).unwrap();
-        assert_eq!(loaded.projects.len(), 1);
-        assert_eq!(loaded.projects[0].name, "测试服务");
-        assert_eq!(loaded.current_project_id.as_deref(), Some("id-1"));
+        let path = dir.path().join("connections.json");
+        let mut file = ConnectionsFile::default();
+        file.connections.push(sample());
+        file.current_connection_id = Some("id-1".to_string());
+        save_connections(&path, &file).unwrap();
+        let loaded = load_connections(&path).unwrap();
+        assert_eq!(loaded.connections.len(), 1);
+        assert_eq!(loaded.connections[0].name, "测试服务");
+        assert_eq!(loaded.current_connection_id.as_deref(), Some("id-1"));
     }
 
     #[test]
     fn missing_file_returns_default() {
         let dir = tempfile::tempdir().unwrap();
-        let loaded = load_projects(&dir.path().join("none.json")).unwrap();
-        assert!(loaded.projects.is_empty());
+        let loaded = load_connections(&dir.path().join("none.json")).unwrap();
+        assert!(loaded.connections.is_empty());
     }
 
     #[test]
     fn corrupted_file_backed_up_and_reset() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("projects.json");
+        let path = dir.path().join("connections.json");
         std::fs::write(&path, "{ not json !!!").unwrap();
-        let loaded = load_projects(&path).unwrap();
-        assert!(loaded.projects.is_empty());
+        let loaded = load_connections(&path).unwrap();
+        assert!(loaded.connections.is_empty());
         // 备份文件已生成
         let bak = std::fs::read_dir(dir.path())
             .unwrap()
@@ -207,14 +210,14 @@ mod tests {
             .find(|e| {
                 e.file_name()
                     .to_string_lossy()
-                    .starts_with("projects.json.bak.")
+                    .starts_with("connections.json.bak.")
             });
         assert!(bak.is_some(), "损坏的配置必须备份而不是静默清空");
     }
 
     #[test]
     fn validate_ok() {
-        assert!(validate_project(&sample(), &[]).is_ok());
+        assert!(validate_connection(&sample(), &[]).is_ok());
     }
 
     #[test]
@@ -226,13 +229,13 @@ mod tests {
         p.access_key = String::new();
         p.secret_key = String::new();
         p.default_bucket = Some("Bad_Bucket".to_string());
-        let errs = validate_project(&p, &[]).unwrap_err();
+        let errs = validate_connection(&p, &[]).unwrap_err();
         assert_eq!(errs.len(), 6);
 
         let mut other = sample();
         other.id = "id-2".to_string();
         assert!(
-            validate_project(&sample(), &[other]).is_err(),
+            validate_connection(&sample(), &[other]).is_err(),
             "名称重复必须报错"
         );
     }
@@ -255,7 +258,7 @@ mod tests {
         // 密钥是本地明文存储基线（规格），但序列化必须无损往返
         let p = sample();
         let json = serde_json::to_string(&p).unwrap();
-        let back: ProjectConfig = serde_json::from_str(&json).unwrap();
+        let back: ConnectionConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.secret_key, p.secret_key);
     }
 }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from "vue";
 import * as api from "../api";
-import type { ProjectConfig } from "../types";
-import { blankProject } from "../types";
+import type { ConnectionConfig } from "../types";
+import { blankConnection } from "../types";
 import { errorMessage } from "../utils";
 import { toast } from "../store";
 import { useMaskClose } from "./useMaskClose";
@@ -10,7 +10,7 @@ import { useMaskClose } from "./useMaskClose";
 const props = defineProps<{
   modelValue: boolean;
   /** null = 新建；否则为编辑目标 */
-  project: ProjectConfig | null;
+  connection: ConnectionConfig | null;
 }>();
 
 const emit = defineEmits<{
@@ -19,7 +19,7 @@ const emit = defineEmits<{
   deleted: [];
 }>();
 
-const form = reactive<ProjectConfig>(blankProject());
+const form = reactive<ConnectionConfig>(blankConnection());
 const isEdit = ref(false);
 const showSecret = ref(false);
 const testing = ref(false);
@@ -33,8 +33,8 @@ watch(
   () => props.modelValue,
   (open) => {
     if (!open) return;
-    Object.assign(form, props.project ?? blankProject());
-    isEdit.value = !!props.project;
+    Object.assign(form, props.connection ?? blankConnection());
+    isEdit.value = !!props.connection;
     showSecret.value = false;
     testing.value = false;
     testMsg.value = "";
@@ -43,7 +43,7 @@ watch(
   },
 );
 
-function toPayload(): ProjectConfig {
+function toPayload(): ConnectionConfig {
   return {
     ...form,
     name: form.name.trim(),
@@ -59,7 +59,7 @@ async function testConnection() {
   testing.value = true;
   testMsg.value = "";
   try {
-    await api.testProjectConnection(toPayload());
+    await api.testConnection(toPayload());
     testOk.value = true;
     testMsg.value = "连接成功";
   } catch (e) {
@@ -74,8 +74,8 @@ async function save() {
   saving.value = true;
   saveError.value = "";
   try {
-    await api.saveProject(toPayload());
-    toast(isEdit.value ? "项目已更新" : "项目已创建");
+    await api.saveConnection(toPayload());
+    toast(isEdit.value ? "连接已更新" : "连接已创建");
     emit("saved");
     emit("update:modelValue", false);
   } catch (e) {
@@ -85,7 +85,7 @@ async function save() {
   }
 }
 
-async function removeProject() {
+async function removeConnection() {
   // 两段式确认，避免误删
   if (!confirmDelete.value) {
     confirmDelete.value = true;
@@ -93,8 +93,8 @@ async function removeProject() {
     return;
   }
   try {
-    await api.deleteProject(form.id);
-    toast("项目已删除");
+    await api.deleteConnection(form.id);
+    toast("连接已删除");
     emit("deleted");
     emit("update:modelValue", false);
   } catch (e) {
@@ -111,9 +111,9 @@ const { onMousedown, onClick } = useMaskClose(close);
 
 <template>
   <div v-if="modelValue" class="modal-mask" @mousedown="onMousedown" @click="onClick">
-    <div class="modal project-modal">
+    <div class="modal connection-modal">
       <div class="modal-head">
-        {{ isEdit ? "编辑项目" : "新建项目" }}
+        {{ isEdit ? "编辑连接" : "新建连接" }}
       </div>
       <div class="modal-body">
         <div class="form-row">
@@ -178,9 +178,9 @@ const { onMousedown, onClick } = useMaskClose(close);
           v-if="isEdit"
           class="btn danger"
           :class="{ solid: confirmDelete }"
-          @click="removeProject"
+          @click="removeConnection"
         >
-          {{ confirmDelete ? "再次点击确认删除" : "删除项目" }}
+          {{ confirmDelete ? "再次点击确认删除" : "删除连接" }}
         </button>
         <span class="spacer" />
         <button class="btn" :disabled="testing" @click="testConnection">
@@ -199,7 +199,7 @@ const { onMousedown, onClick } = useMaskClose(close);
 </template>
 
 <style scoped>
-.project-modal {
+.connection-modal {
   width: 520px;
 }
 .form-row.two {

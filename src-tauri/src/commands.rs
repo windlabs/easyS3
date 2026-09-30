@@ -3,7 +3,7 @@
 
 use crate::state::{lock, App};
 use crate::tasks::{self, FsItem, RetryJob, TaskEntry, TaskInfo, TaskKind, TaskShared, TaskStatus};
-use easys3_core::config::{validate_project, ProjectConfig};
+use easys3_core::config::{validate_connection, ConnectionConfig};
 use easys3_core::list::ListResult;
 use easys3_core::plan::collect_upload_files;
 use easys3_core::preview::PreviewData;
@@ -17,68 +17,73 @@ use uuid::Uuid;
 
 #[derive(Serialize)]
 pub struct StateDto {
-    pub projects: Vec<ProjectConfig>,
-    pub current_project_id: Option<String>,
+    pub connections: Vec<ConnectionConfig>,
+    pub current_connection_id: Option<String>,
 }
 
 #[tauri::command]
 pub fn get_state(state: State<App>) -> StateDto {
     let inner = lock(&state.inner);
     StateDto {
-        projects: inner.file.projects.clone(),
-        current_project_id: inner.file.current_project_id.clone(),
+        connections: inner.file.connections.clone(),
+        current_connection_id: inner.file.current_connection_id.clone(),
     }
 }
 
 #[tauri::command]
-pub fn save_project(state: State<App>, project: ProjectConfig) -> Result<(), String> {
+pub fn save_connection(state: State<App>, connection: ConnectionConfig) -> Result<(), String> {
     {
         let mut inner = lock(&state.inner);
-        if let Err(errs) = validate_project(&project, &inner.file.projects) {
+        if let Err(errs) = validate_connection(&connection, &inner.file.connections) {
             return Err(errs.join("；"));
         }
-        match inner.file.projects.iter_mut().find(|p| p.id == project.id) {
-            Some(p) => *p = project.clone(),
-            None => inner.file.projects.push(project.clone()),
+        match inner
+            .file
+            .connections
+            .iter_mut()
+            .find(|p| p.id == connection.id)
+        {
+            Some(p) => *p = connection.clone(),
+            None => inner.file.connections.push(connection.clone()),
         }
-        // 配置变更后重建该项目的 S3 客户端
-        inner.clients.remove(&project.id);
-        if inner.file.current_project_id.is_none() {
-            inner.file.current_project_id = Some(project.id);
+        // 配置变更后重建该连接的 S3 客户端
+        inner.clients.remove(&connection.id);
+        if inner.file.current_connection_id.is_none() {
+            inner.file.current_connection_id = Some(connection.id);
         }
     }
     state.save_file()
 }
 
 #[tauri::command]
-pub fn delete_project(state: State<App>, id: String) -> Result<(), String> {
+pub fn delete_connection(state: State<App>, id: String) -> Result<(), String> {
     {
         let mut inner = lock(&state.inner);
-        inner.file.projects.retain(|p| p.id != id);
+        inner.file.connections.retain(|p| p.id != id);
         inner.clients.remove(&id);
-        // 删除当前项目：自动选中剩余第一个，无项目则为空（规格）
-        if inner.file.current_project_id.as_deref() == Some(id.as_str()) {
-            inner.file.current_project_id = inner.file.projects.first().map(|p| p.id.clone());
+        // 删除当前连接：自动选中剩余第一个，无连接则为空（规格）
+        if inner.file.current_connection_id.as_deref() == Some(id.as_str()) {
+            inner.file.current_connection_id = inner.file.connections.first().map(|p| p.id.clone());
         }
     }
     state.save_file()
 }
 
 #[tauri::command]
-pub fn set_current_project(state: State<App>, id: String) -> Result<(), String> {
+pub fn set_current_connection(state: State<App>, id: String) -> Result<(), String> {
     {
         let mut inner = lock(&state.inner);
-        if !inner.file.projects.iter().any(|p| p.id == id) {
-            return Err("项目不存在".to_string());
+        if !inner.file.connections.iter().any(|p| p.id == id) {
+            return Err("连接不存在".to_string());
         }
-        inner.file.current_project_id = Some(id);
+        inner.file.current_connection_id = Some(id);
     }
     state.save_file()
 }
 
 #[tauri::command]
-pub async fn test_project_connection(project: ProjectConfig) -> Result<(), String> {
-    easys3_core::s3::test_connection(&project)
+pub async fn test_connection(connection: ConnectionConfig) -> Result<(), String> {
+    easys3_core::s3::test_connection(&connection)
         .await
         .map_err(|e| e.to_string())
 }
@@ -313,10 +318,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        (
-            entry.shared.clone(),
-            retry_job,
-        )
+        (entry.shared.clone(), retry_job)
     };
     {
         let gi = lock(&shared.info);

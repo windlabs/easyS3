@@ -17,10 +17,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
-            commands::save_project,
-            commands::delete_project,
-            commands::set_current_project,
-            commands::test_project_connection,
+            commands::save_connection,
+            commands::delete_connection,
+            commands::set_current_connection,
+            commands::test_connection,
             commands::list_buckets,
             commands::list_objects,
             commands::count_objects,

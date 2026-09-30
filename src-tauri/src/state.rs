@@ -1,10 +1,10 @@
-//! 应用状态：配置文件、按项目缓存的 S3 客户端、任务注册表。
+//! 应用状态：配置文件、按连接缓存的 S3 客户端、任务注册表。
 //!
 //! 锁纪律：std::sync::Mutex 只在同步临界区内短暂持有，绝不跨 .await；
 //! 异步命令先克隆 Client（内部 Arc，克隆廉价）再释放锁执行 S3 操作。
 
 use crate::tasks::TaskEntry;
-use easys3_core::config::{load_projects, save_projects, ProjectConfig, ProjectsFile};
+use easys3_core::config::{load_connections, save_connections, ConnectionConfig, ConnectionsFile};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -16,7 +16,7 @@ pub struct App {
 }
 
 pub struct Inner {
-    pub file: ProjectsFile,
+    pub file: ConnectionsFile,
     pub clients: HashMap<String, aws_sdk_s3::Client>,
     pub tasks: HashMap<String, TaskEntry>,
 }
@@ -32,8 +32,8 @@ impl App {
             .path()
             .app_config_dir()
             .expect("无法确定应用配置目录");
-        let config_path = dir.join("projects.json");
-        let file = load_projects(&config_path).unwrap_or_default();
+        let config_path = dir.join("connections.json");
+        let file = load_connections(&config_path).unwrap_or_default();
         App {
             config_path,
             inner: Mutex::new(Inner {
@@ -44,40 +44,40 @@ impl App {
         }
     }
 
-    pub fn current_project(&self) -> Result<ProjectConfig, String> {
+    pub fn current_connection(&self) -> Result<ConnectionConfig, String> {
         let inner = lock(&self.inner);
         let id = inner
             .file
-            .current_project_id
+            .current_connection_id
             .clone()
-            .ok_or("尚未选择项目，请先在左侧新建或选择项目")?;
+            .ok_or("尚未选择连接，请先在左侧新建或选择连接")?;
         inner
             .file
-            .projects
+            .connections
             .clone()
             .into_iter()
             .find(|p| p.id == id)
-            .ok_or_else(|| "项目不存在".to_string())
+            .ok_or_else(|| "连接不存在".to_string())
     }
 
-    /// 当前项目的 S3 客户端（按项目缓存；配置变更时由命令层主动失效）。
+    /// 当前连接的 S3 客户端（按连接缓存；配置变更时由命令层主动失效）。
     pub fn current_client(&self) -> Result<(aws_sdk_s3::Client, String), String> {
-        let project = self.current_project()?;
+        let connection = self.current_connection()?;
         let client = {
             let mut inner = lock(&self.inner);
-            if let Some(c) = inner.clients.get(&project.id) {
+            if let Some(c) = inner.clients.get(&connection.id) {
                 c.clone()
             } else {
-                let c = easys3_core::s3::build_client(&project).map_err(|e| e.to_string())?;
-                inner.clients.insert(project.id.clone(), c.clone());
+                let c = easys3_core::s3::build_client(&connection).map_err(|e| e.to_string())?;
+                inner.clients.insert(connection.id.clone(), c.clone());
                 c
             }
         };
-        Ok((client, project.name))
+        Ok((client, connection.name))
     }
 
     pub fn save_file(&self) -> Result<(), String> {
         let inner = lock(&self.inner);
-        save_projects(&self.config_path, &inner.file).map_err(|e| e.to_string())
+        save_connections(&self.config_path, &inner.file).map_err(|e| e.to_string())
     }
 }

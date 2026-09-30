@@ -1,19 +1,19 @@
 import { reactive } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "./api";
-import type { Entry, ProjectConfig, TaskInfo } from "./types";
+import type { Entry, ConnectionConfig, TaskInfo } from "./types";
 import { errorMessage } from "./utils";
 
 // ---------- 全局应用状态 ----------
 
 export const app = reactive({
-  projects: [] as ProjectConfig[],
-  currentProjectId: null as string | null,
+  connections: [] as ConnectionConfig[],
+  currentConnectionId: null as string | null,
   loaded: false,
 });
 
-export function currentProject(): ProjectConfig | null {
-  return app.projects.find((p) => p.id === app.currentProjectId) ?? null;
+export function currentConnection(): ConnectionConfig | null {
+  return app.connections.find((p) => p.id === app.currentConnectionId) ?? null;
 }
 
 // ---------- 浏览状态 ----------
@@ -60,19 +60,19 @@ export function toast(text: string, kind: "info" | "error" = "info") {
 
 export async function refreshState() {
   const s = await api.getState();
-  app.projects = s.projects;
-  app.currentProjectId = s.current_project_id;
+  app.connections = s.connections;
+  app.currentConnectionId = s.current_connection_id;
   app.loaded = true;
 }
 
-export async function switchProject(id: string) {
-  await api.setCurrentProject(id);
+export async function switchConnection(id: string) {
+  await api.setCurrentConnection(id);
   await refreshState();
-  await enterProject();
+  await enterConnection();
 }
 
-export async function enterProject() {
-  const p = currentProject();
+export async function enterConnection() {
+  const p = currentConnection();
   selection.clear();
   browse.filter = "";
   if (!p) {
@@ -80,7 +80,7 @@ export async function enterProject() {
     return;
   }
   if (p.default_bucket) {
-    // 限定单桶项目：跳过桶列表直接进入该桶（规格）
+    // 限定单桶连接：跳过桶列表直接进入该桶（规格）
     browse.bucket = p.default_bucket;
     browse.prefix = "";
     await loadFirstPage();

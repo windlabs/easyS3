@@ -2,7 +2,7 @@
 name = "easys3-core"
 version.workspace = true
 edition.workspace = true
-description = "easyS3 业务核心：项目配置、S3 操作（列表/上传/下载/删除/预览）"
+description = "easyS3 业务核心：连接配置、S3 操作（列表/上传/下载/删除/预览）"
 license.workspace = true
 
 [dependencies]
