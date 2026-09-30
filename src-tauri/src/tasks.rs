@@ -7,10 +7,10 @@ use easys3_core::delete::delete_keys;
 use easys3_core::download::download_object;
 use easys3_core::error::CoreError;
 use easys3_core::list::collect_prefix_objects;
-use easys3_core::plan::unique_path;
+use easys3_core::plan::{key_matches_failure, unique_path};
 use easys3_core::upload::{upload_file, ProgressFn};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -89,7 +89,9 @@ pub struct DownloadJob {
     pub dest: PathBuf,
 }
 
-/// 重试所需的原始参数（客户端快照：任务与连接解耦，切换/删除连接不中断）
+/// 重试所需的原始参数（客户端快照：任务与连接解耦，切换/删除连接不中断）。
+/// Download / Delete 保存**原始列表项**而非展开结果——重试时按原参数重新展开，
+/// 使展开失败（列出对象失败）的文件夹也能重试（规格）。
 #[derive(Clone)]
 pub enum RetryJob {
     Upload {
@@ -98,15 +100,20 @@ pub enum RetryJob {
         files: Vec<(PathBuf, String)>,
     },
     Download {
+        /// 传输客户端：对象体下载（不设超时，大文件合法地慢）
         client: aws_sdk_s3::Client,
+        /// 控制面客户端：展开列出（30s 尝试超时）
+        control: aws_sdk_s3::Client,
         bucket: String,
-        jobs: Vec<DownloadJob>,
+        items: Vec<FsItem>,
+        dest_dir: PathBuf,
         conflict: String,
     },
     Delete {
+        /// 控制面客户端：展开列出与 DeleteObjects 均为小请求
         client: aws_sdk_s3::Client,
         bucket: String,
-        keys: Vec<String>,
+        items: Vec<FsItem>,
     },
 }
 
@@ -293,18 +300,26 @@ pub fn spawn_upload(
 
 // ---------- 下载 ----------
 
+// 后台任务入口的参数即跨线程移交的全部任务上下文（客户端快照 / 取消 / 状态 / 重试槽），
+// 语义上是平铺的移交清单，强行聚合成结构体只会掩盖一一对应关系
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_download_expand(
     app: tauri::AppHandle,
     client: aws_sdk_s3::Client,
+    control: aws_sdk_s3::Client,
     bucket: String,
     items: Vec<FsItem>,
     dest_dir: PathBuf,
     conflict: String,
+    // 重试范围：None = 首次执行；Some = 仅执行失败范围内的对象（重试，规格）
+    retry_failed: Option<HashSet<String>>,
     cancel: Arc<AtomicBool>,
     shared: Arc<TaskShared>,
     retry_slot: Arc<Mutex<Option<RetryJob>>>,
 ) {
     tauri::async_runtime::spawn(async move {
+        // 原始列表项存入重试槽：重试按原参数重新展开（展开失败的文件夹也可重试）
+        let items_for_retry = items.clone();
         // 展开：文件夹（前缀）递归列出全部对象，保留目录结构（规格）
         let mut jobs: Vec<DownloadJob> = Vec::new();
         for item in items {
@@ -313,8 +328,8 @@ pub fn spawn_download_expand(
             }
             if item.is_dir {
                 let prefix = item.key.clone();
-                // false = 下载不含目录占位对象（规格 §3）
-                match collect_prefix_objects(&client, &bucket, &prefix, &cancel, false).await {
+                // false = 下载不含目录占位对象（规格 §3）；列出走控制面客户端（带超时）
+                match collect_prefix_objects(&control, &bucket, &prefix, &cancel, false).await {
                     Ok(keys) => jobs.extend(keys.into_iter().map(|k| {
                         let rel = k
                             .strip_prefix(prefix.as_str())
@@ -336,14 +351,21 @@ pub fn spawn_download_expand(
                 });
             }
         }
+        // 重试：仅保留失败范围内的对象——已成功的不重复下载
+        // （rename 冲突策略下重下已成功文件会产生 "name (1)" 副本，必须排除）
+        if let Some(failed) = &retry_failed {
+            jobs.retain(|j| key_matches_failure(&j.key, failed));
+        }
         {
             let mut gi = lock(&shared.info);
             gi.files_total = jobs.len() + gi.files_failed;
         }
         *lock(&retry_slot) = Some(RetryJob::Download {
             client: client.clone(),
+            control: control.clone(),
             bucket: bucket.clone(),
-            jobs: jobs.clone(),
+            items: items_for_retry,
+            dest_dir,
             conflict: conflict.clone(),
         });
         if !cancel.load(Ordering::Relaxed) && !jobs.is_empty() {
@@ -351,20 +373,6 @@ pub fn spawn_download_expand(
         } else {
             finish_task(&app, &cancel, &shared);
         }
-    });
-}
-
-pub fn spawn_download_jobs(
-    app: tauri::AppHandle,
-    client: aws_sdk_s3::Client,
-    bucket: String,
-    jobs: Vec<DownloadJob>,
-    conflict: String,
-    cancel: Arc<AtomicBool>,
-    shared: Arc<TaskShared>,
-) {
-    tauri::async_runtime::spawn(async move {
-        run_download_jobs(&app, &client, &bucket, jobs, &conflict, &cancel, &shared).await;
     });
 }
 
@@ -409,16 +417,22 @@ async fn run_download_jobs(
 
 // ---------- 删除 ----------
 
+// 同 spawn_download_expand：平铺的任务上下文移交清单
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_delete_expand(
     app: tauri::AppHandle,
     client: aws_sdk_s3::Client,
     bucket: String,
     items: Vec<FsItem>,
+    // 重试范围：None = 首次执行；Some = 仅删除失败范围内的对象（重试，规格）
+    retry_failed: Option<HashSet<String>>,
     cancel: Arc<AtomicBool>,
     shared: Arc<TaskShared>,
     retry_slot: Arc<Mutex<Option<RetryJob>>>,
 ) {
     tauri::async_runtime::spawn(async move {
+        // 原始列表项存入重试槽：重试按原参数重新展开（展开失败的文件夹也可重试）
+        let items_for_retry = items.clone();
         let mut keys: Vec<String> = Vec::new();
         for item in items {
             if cancel.load(Ordering::Relaxed) {
@@ -436,6 +450,10 @@ pub fn spawn_delete_expand(
                 keys.push(item.key.clone());
             }
         }
+        // 重试：仅保留失败范围内的 key——已成功的不重复删除（删除虽幂等，避免无谓请求）
+        if let Some(failed) = &retry_failed {
+            keys.retain(|k| key_matches_failure(k, failed));
+        }
         {
             let mut gi = lock(&shared.info);
             gi.files_total = keys.len() + gi.files_failed;
@@ -443,26 +461,13 @@ pub fn spawn_delete_expand(
         *lock(&retry_slot) = Some(RetryJob::Delete {
             client: client.clone(),
             bucket: bucket.clone(),
-            keys: keys.clone(),
+            items: items_for_retry,
         });
         if !cancel.load(Ordering::Relaxed) && !keys.is_empty() {
             run_delete_keys(&app, &client, &bucket, keys, &cancel, &shared).await;
         } else {
             finish_task(&app, &cancel, &shared);
         }
-    });
-}
-
-pub fn spawn_delete_keys(
-    app: tauri::AppHandle,
-    client: aws_sdk_s3::Client,
-    bucket: String,
-    keys: Vec<String>,
-    cancel: Arc<AtomicBool>,
-    shared: Arc<TaskShared>,
-) {
-    tauri::async_runtime::spawn(async move {
-        run_delete_keys(&app, &client, &bucket, keys, &cancel, &shared).await;
     });
 }
 

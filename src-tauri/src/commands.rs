@@ -5,7 +5,7 @@ use crate::state::{lock, App};
 use crate::tasks::{self, FsItem, RetryJob, TaskEntry, TaskInfo, TaskKind, TaskShared, TaskStatus};
 use easys3_core::config::{connection_fields_changed, validate_connection, ConnectionConfig};
 use easys3_core::list::ListResult;
-use easys3_core::plan::collect_upload_files;
+use easys3_core::plan::{collect_upload_files, item_matches_failure};
 use easys3_core::preview::PreviewData;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -53,8 +53,9 @@ pub fn save_connection(state: State<App>, connection: ConnectionConfig) -> Resul
             }
             None => inner.file.connections.push(connection.clone()),
         }
-        // 配置变更后重建该连接的 S3 客户端
+        // 配置变更后重建该连接的 S3 客户端（传输 + 控制面两类缓存）
         inner.clients.remove(&connection.id);
+        inner.control_clients.remove(&connection.id);
         if inner.file.current_connection_id.is_none() {
             inner.file.current_connection_id = Some(connection.id);
         }
@@ -68,6 +69,7 @@ pub fn delete_connection(state: State<App>, id: String) -> Result<(), String> {
         let mut inner = lock(&state.inner);
         inner.file.connections.retain(|p| p.id != id);
         inner.clients.remove(&id);
+        inner.control_clients.remove(&id);
         // 删除当前连接：自动选中剩余第一个，无连接则为空（规格）
         if inner.file.current_connection_id.as_deref() == Some(id.as_str()) {
             inner.file.current_connection_id = inner.file.connections.first().map(|p| p.id.clone());
@@ -97,7 +99,7 @@ pub async fn test_connection(connection: ConnectionConfig) -> Result<(), String>
 
 #[tauri::command]
 pub async fn list_buckets(state: State<'_, App>) -> Result<Vec<String>, String> {
-    let (client, _) = state.current_client()?;
+    let (client, _) = state.current_control_client()?;
     easys3_core::list::list_buckets(&client)
         .await
         .map_err(|e| e.to_string())
@@ -110,7 +112,7 @@ pub async fn list_objects(
     prefix: String,
     token: Option<String>,
 ) -> Result<ListResult, String> {
-    let (client, _) = state.current_client()?;
+    let (client, _) = state.current_control_client()?;
     easys3_core::list::list_objects(&client, &bucket, &prefix, token.as_deref())
         .await
         .map_err(|e| e.to_string())
@@ -123,7 +125,7 @@ pub async fn count_objects(
     bucket: String,
     prefix: String,
 ) -> Result<u64, String> {
-    let (client, _) = state.current_client()?;
+    let (client, _) = state.current_control_client()?;
     let cancel = Arc::new(AtomicBool::new(false));
     // true = 统计含目录占位对象（与实际删除行为一致，规格 §4）
     let keys = easys3_core::list::collect_prefix_objects(&client, &bucket, &prefix, &cancel, true)
@@ -138,7 +140,7 @@ pub async fn preview_object(
     bucket: String,
     key: String,
 ) -> Result<PreviewData, String> {
-    let (client, _) = state.current_client()?;
+    let (client, _) = state.current_control_client()?;
     easys3_core::preview::preview_object(&client, &bucket, &key)
         .await
         .map_err(|e| e.to_string())
@@ -235,7 +237,9 @@ pub fn start_download(
     dest: String,
     conflict: String,
 ) -> Result<String, String> {
+    // 传输客户端下载对象体；控制面客户端展开列出（带超时，规格）
     let (client, _) = state.current_client()?;
+    let (control, _) = state.current_control_client()?;
     let id = Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     let shared = TaskShared::new(tasks::new_task_info(
@@ -260,10 +264,12 @@ pub fn start_download(
     tasks::spawn_download_expand(
         app,
         client,
+        control,
         bucket,
         items,
         PathBuf::from(dest),
         conflict,
+        None,
         cancel,
         shared,
         retry,
@@ -278,7 +284,8 @@ pub fn start_delete(
     bucket: String,
     items: Vec<FsItem>,
 ) -> Result<String, String> {
-    let (client, _) = state.current_client()?;
+    // 删除任务用控制面客户端：展开列出与 DeleteObjects 均为小请求（带超时，规格）
+    let (client, _) = state.current_control_client()?;
     let id = Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     let shared = TaskShared::new(tasks::new_task_info(
@@ -300,7 +307,7 @@ pub fn start_delete(
             },
         );
     }
-    tasks::spawn_delete_expand(app, client, bucket, items, cancel, shared, retry);
+    tasks::spawn_delete_expand(app, client, bucket, items, None, cancel, shared, retry);
     Ok(id)
 }
 
@@ -386,13 +393,17 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
         }
         Some(RetryJob::Download {
             client,
+            control,
             bucket,
-            jobs,
+            items,
+            dest_dir,
             conflict,
         }) => {
-            let subset: Vec<_> = jobs
+            // 失败项命中的列表项：文件直接重试；文件夹（含展开失败的）重新展开后
+            // 仅重试其中失败对象（spawn 内过滤，已成功的不重复下载）
+            let subset: Vec<FsItem> = items
                 .into_iter()
-                .filter(|j| failed.contains(&j.key))
+                .filter(|i| item_matches_failure(&i.key, i.is_dir, &failed))
                 .collect();
             if subset.is_empty() {
                 return Err("没有可重试的失败项".to_string());
@@ -409,27 +420,42 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 gi.failures.clear();
                 gi.current_file = None;
             }
-            {
+            // 更新取消标志并取回重试槽；任务条目被并发清除时用一次性槽位，重试仍执行
+            let retry_slot = {
                 let mut inner = lock(&state.inner);
-                if let Some(entry) = inner.tasks.get_mut(&task_id) {
-                    entry.cancel = cancel.clone();
-                    *entry.retry.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some(RetryJob::Download {
-                            client: client.clone(),
-                            bucket: bucket.clone(),
-                            jobs: subset.clone(),
-                            conflict: conflict.clone(),
-                        });
+                match inner.tasks.get_mut(&task_id) {
+                    Some(entry) => {
+                        entry.cancel = cancel.clone();
+                        entry.retry.clone()
+                    }
+                    None => Arc::new(Mutex::new(None)),
                 }
-            }
-            tasks::spawn_download_jobs(app, client, bucket, subset, conflict, cancel, shared);
+            };
+            tasks::spawn_download_expand(
+                app,
+                client,
+                control,
+                bucket,
+                subset,
+                dest_dir,
+                conflict,
+                Some(failed),
+                cancel,
+                shared,
+                retry_slot,
+            );
         }
         Some(RetryJob::Delete {
             client,
             bucket,
-            keys,
+            items,
         }) => {
-            let subset: Vec<_> = keys.into_iter().filter(|k| failed.contains(k)).collect();
+            // 失败项命中的列表项：文件直接重试；文件夹（含展开失败的）重新展开后
+            // 仅重试其中失败 key（spawn 内过滤，已成功的不重复删除）
+            let subset: Vec<FsItem> = items
+                .into_iter()
+                .filter(|i| item_matches_failure(&i.key, i.is_dir, &failed))
+                .collect();
             if subset.is_empty() {
                 return Err("没有可重试的失败项".to_string());
             }
@@ -445,19 +471,27 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 gi.failures.clear();
                 gi.current_file = None;
             }
-            {
+            // 更新取消标志并取回重试槽；任务条目被并发清除时用一次性槽位，重试仍执行
+            let retry_slot = {
                 let mut inner = lock(&state.inner);
-                if let Some(entry) = inner.tasks.get_mut(&task_id) {
-                    entry.cancel = cancel.clone();
-                    *entry.retry.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some(RetryJob::Delete {
-                            client: client.clone(),
-                            bucket: bucket.clone(),
-                            keys: subset.clone(),
-                        });
+                match inner.tasks.get_mut(&task_id) {
+                    Some(entry) => {
+                        entry.cancel = cancel.clone();
+                        entry.retry.clone()
+                    }
+                    None => Arc::new(Mutex::new(None)),
                 }
-            }
-            tasks::spawn_delete_keys(app, client, bucket, subset, cancel, shared);
+            };
+            tasks::spawn_delete_expand(
+                app,
+                client,
+                bucket,
+                subset,
+                Some(failed),
+                cancel,
+                shared,
+                retry_slot,
+            );
         }
         None => return Err("该任务不支持重试".to_string()),
     }

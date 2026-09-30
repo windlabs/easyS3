@@ -17,7 +17,10 @@ pub struct App {
 
 pub struct Inner {
     pub file: ConnectionsFile,
+    /// 传输客户端缓存（上传 / 下载对象体，无操作超时）
     pub clients: HashMap<String, aws_sdk_s3::Client>,
+    /// 控制面客户端缓存（浏览 / 测试 / 计数 / 预览 / 删除，30s 尝试超时，规格）
+    pub control_clients: HashMap<String, aws_sdk_s3::Client>,
     pub tasks: HashMap<String, TaskEntry>,
 }
 
@@ -39,6 +42,7 @@ impl App {
             inner: Mutex::new(Inner {
                 file,
                 clients: HashMap::new(),
+                control_clients: HashMap::new(),
                 tasks: HashMap::new(),
             }),
         }
@@ -70,6 +74,25 @@ impl App {
             } else {
                 let c = easys3_core::s3::build_client(&connection).map_err(|e| e.to_string())?;
                 inner.clients.insert(connection.id.clone(), c.clone());
+                c
+            }
+        };
+        Ok((client, connection.name))
+    }
+
+    /// 当前连接的控制面客户端（浏览 / 测试 / 计数 / 预览 / 删除：30s 尝试超时，规格）。
+    pub fn current_control_client(&self) -> Result<(aws_sdk_s3::Client, String), String> {
+        let connection = self.current_connection()?;
+        let client = {
+            let mut inner = lock(&self.inner);
+            if let Some(c) = inner.control_clients.get(&connection.id) {
+                c.clone()
+            } else {
+                let c = easys3_core::s3::build_control_client(&connection)
+                    .map_err(|e| e.to_string())?;
+                inner
+                    .control_clients
+                    .insert(connection.id.clone(), c.clone());
                 c
             }
         };
