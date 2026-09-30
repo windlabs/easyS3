@@ -28,3 +28,7 @@ yarn-debug.log*
 yarn-error.log*
 
 
+#---本地开发文 -----
+.idea/
+.agents/
+AGENTS.md
