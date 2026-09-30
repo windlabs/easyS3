@@ -31,6 +31,22 @@ pub struct ConnectionConfig {
     /// 可选；限定单桶连接（AK 无 ListBuckets 权限时使用）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_bucket: Option<String>,
+    /// 可选；服务使用自签证书时指定 CA 证书（PEM 编码）文件路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_cert_path: Option<String>,
+    /// 最近一次「测试连接」结果；连接相关字段变更后作废清空（规格）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_test: Option<LastTest>,
+}
+
+/// 最近一次「测试连接」结果（随连接持久化，规格：`.agents/connection-config.md`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastTest {
+    pub ok: bool,
+    /// 成功为固定文案；失败为分类后的中文错误（不得包含 secret_key）
+    pub msg: String,
+    /// Unix 时间戳（秒）
+    pub at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +157,18 @@ pub fn validate_connection(
     }
 }
 
+/// 连接相关字段是否变化——任一变化即视为已持久化的测试结果（`last_test`）失效（规格）。
+/// 仅比较影响连通性的字段，不含 `name` 与 `last_test` 本身。
+pub fn connection_fields_changed(old: &ConnectionConfig, new: &ConnectionConfig) -> bool {
+    old.endpoint_url != new.endpoint_url
+        || old.region != new.region
+        || old.access_key != new.access_key
+        || old.secret_key != new.secret_key
+        || old.default_bucket != new.default_bucket
+        || old.force_path_style != new.force_path_style
+        || old.ca_cert_path != new.ca_cert_path
+}
+
 /// 桶名规范：3-63 位小写字母/数字/点/连字符，首尾为字母或数字。
 pub fn is_valid_bucket_name(name: &str) -> bool {
     let n = name.len();
@@ -172,6 +200,8 @@ mod tests {
             secret_key: "sk".to_string(),
             force_path_style: true,
             default_bucket: None,
+            ca_cert_path: None,
+            last_test: None,
         }
     }
 
@@ -260,5 +290,68 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: ConnectionConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.secret_key, p.secret_key);
+    }
+
+    #[test]
+    fn old_json_without_new_fields_loads() {
+        // 兼容旧版 connections.json（无 ca_cert_path / last_test 字段）
+        let json = r#"{
+            "id": "id-1",
+            "name": "旧配置",
+            "endpoint_url": "https://s3.example.com",
+            "region": "us-east-1",
+            "access_key": "ak",
+            "secret_key": "sk",
+            "force_path_style": true
+        }"#;
+        let p: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert!(p.ca_cert_path.is_none());
+        assert!(p.last_test.is_none());
+    }
+
+    #[test]
+    fn last_test_roundtrip() {
+        let mut p = sample();
+        p.last_test = Some(LastTest {
+            ok: true,
+            msg: "连接成功".to_string(),
+            at: 1_700_000_000,
+        });
+        let json = serde_json::to_string(&p).unwrap();
+        let back: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.last_test, p.last_test);
+    }
+
+    #[test]
+    fn connection_fields_changed_rules() {
+        let base = sample();
+        let same = sample();
+        assert!(!connection_fields_changed(&base, &same), "字段全同不算变更");
+
+        let mut renamed = sample();
+        renamed.name = "改名".to_string();
+        assert!(
+            !connection_fields_changed(&base, &renamed),
+            "改名不影响测试结果"
+        );
+
+        type Mutator = Box<dyn Fn(&mut ConnectionConfig)>;
+        let mutators: Vec<Mutator> = vec![
+            Box::new(|p| p.endpoint_url = "https://other.example.com".into()),
+            Box::new(|p| p.region = "cn-north-1".into()),
+            Box::new(|p| p.access_key = "ak2".into()),
+            Box::new(|p| p.secret_key = "sk2".into()),
+            Box::new(|p| p.default_bucket = Some("bucket".into())),
+            Box::new(|p| p.force_path_style = false),
+            Box::new(|p| p.ca_cert_path = Some("/path/ca.pem".into())),
+        ];
+        for mutate in mutators {
+            let mut p = sample();
+            mutate(&mut p);
+            assert!(
+                connection_fields_changed(&base, &p),
+                "任一连接字段变更都应作废已持久化的测试结果"
+            );
+        }
     }
 }

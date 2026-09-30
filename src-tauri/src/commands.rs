@@ -3,7 +3,7 @@
 
 use crate::state::{lock, App};
 use crate::tasks::{self, FsItem, RetryJob, TaskEntry, TaskInfo, TaskKind, TaskShared, TaskStatus};
-use easys3_core::config::{validate_connection, ConnectionConfig};
+use easys3_core::config::{connection_fields_changed, validate_connection, ConnectionConfig};
 use easys3_core::list::ListResult;
 use easys3_core::plan::collect_upload_files;
 use easys3_core::preview::PreviewData;
@@ -43,7 +43,14 @@ pub fn save_connection(state: State<App>, connection: ConnectionConfig) -> Resul
             .iter_mut()
             .find(|p| p.id == connection.id)
         {
-            Some(p) => *p = connection.clone(),
+            Some(existing) => {
+                let mut updated = connection.clone();
+                // 连接相关字段变更后，已持久化的测试结果作废清空（规格）
+                if connection_fields_changed(existing, &updated) {
+                    updated.last_test = None;
+                }
+                *existing = updated;
+            }
             None => inner.file.connections.push(connection.clone()),
         }
         // 配置变更后重建该连接的 S3 客户端
@@ -109,7 +116,7 @@ pub async fn list_objects(
         .map_err(|e| e.to_string())
 }
 
-/// 删除/下载文件夹前的对象计数（规格：确认框必须显示实际数量）
+/// 删除前缀前的对象计数（规格：确认框必须显示实际数量；含随前缀一并删除的目录占位对象）
 #[tauri::command]
 pub async fn count_objects(
     state: State<'_, App>,
@@ -118,7 +125,8 @@ pub async fn count_objects(
 ) -> Result<u64, String> {
     let (client, _) = state.current_client()?;
     let cancel = Arc::new(AtomicBool::new(false));
-    let keys = easys3_core::list::collect_prefix_objects(&client, &bucket, &prefix, &cancel)
+    // true = 统计含目录占位对象（与实际删除行为一致，规格 §4）
+    let keys = easys3_core::list::collect_prefix_objects(&client, &bucket, &prefix, &cancel, true)
         .await
         .map_err(|e| e.to_string())?;
     Ok(keys.len() as u64)

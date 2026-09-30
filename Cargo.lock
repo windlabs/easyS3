@@ -1271,6 +1271,8 @@ name = "easys3-core"
 version = "1.0.1"
 dependencies = [
  "aws-sdk-s3",
+ "aws-smithy-http-client",
+ "aws-smithy-runtime-api",
  "base64 0.22.1",
  "serde",
  "serde_json",

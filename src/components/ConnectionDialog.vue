@@ -3,7 +3,7 @@ import { reactive, ref, watch } from "vue";
 import * as api from "../api";
 import type { ConnectionConfig } from "../types";
 import { blankConnection } from "../types";
-import { errorMessage } from "../utils";
+import { errorMessage, formatTime } from "../utils";
 import { toast } from "../store";
 import { useMaskClose } from "./useMaskClose";
 
@@ -33,11 +33,17 @@ watch(
   () => props.modelValue,
   (open) => {
     if (!open) return;
-    Object.assign(form, props.connection ?? blankConnection());
+    // 先铺默认值再覆盖，避免可选字段残留上一次编辑的值
+    Object.assign(form, blankConnection(), props.connection ?? blankConnection());
     isEdit.value = !!props.connection;
     showSecret.value = false;
     testing.value = false;
-    testMsg.value = "";
+    // 用已持久化的最近一次测试结果初始化（规格：UI 展示最近一次测试结果）
+    const lt = form.last_test;
+    testOk.value = lt ? lt.ok : false;
+    testMsg.value = lt
+      ? `上次测试（${formatTime(new Date(lt.at * 1000).toISOString())}）：${lt.msg}`
+      : "";
     saveError.value = "";
     confirmDelete.value = false;
   },
@@ -52,7 +58,13 @@ function toPayload(): ConnectionConfig {
     access_key: form.access_key.trim(),
     secret_key: form.secret_key.trim(),
     default_bucket: form.default_bucket?.trim() || null,
+    ca_cert_path: form.ca_cert_path?.trim() || null,
+    last_test: form.last_test ?? null,
   };
+}
+
+function nowSec(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
 async function testConnection() {
@@ -62,9 +74,12 @@ async function testConnection() {
     await api.testConnection(toPayload());
     testOk.value = true;
     testMsg.value = "连接成功";
+    form.last_test = { ok: true, msg: "连接成功", at: nowSec() };
   } catch (e) {
     testOk.value = false;
-    testMsg.value = errorMessage(e);
+    const msg = errorMessage(e);
+    testMsg.value = msg;
+    form.last_test = { ok: false, msg, at: nowSec() };
   } finally {
     testing.value = false;
   }
@@ -170,6 +185,18 @@ const { onMousedown, onClick } = useMaskClose(close);
             <input v-model="form.force_path_style" type="checkbox" />
             路径风格访问（path-style，MinIO / Ceph 等 S3 兼容服务需保持开启）
           </label>
+        </div>
+        <div class="form-row">
+          <label>CA 证书（可选）</label>
+          <input
+            v-model="form.ca_cert_path"
+            class="input"
+            placeholder="/path/to/ca.pem"
+            autocomplete="off"
+          />
+          <div class="form-hint">
+            服务使用自签名 HTTPS 证书时填写其 CA 证书（PEM）文件路径；留空使用系统证书。
+          </div>
         </div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>

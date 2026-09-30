@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-const props = defineProps<{ bucket: string; prefix: string }>();
-const emit = defineEmits<{ navigate: [prefix: string] }>();
+const props = defineProps<{
+  bucket: string;
+  prefix: string;
+  /** 显示「桶列表」根节点（限定单桶连接无桶列表，不显示，规格） */
+  showBucketsRoot?: boolean;
+}>();
+const emit = defineEmits<{
+  navigate: [prefix: string];
+  showBuckets: [];
+}>();
 
 const segments = computed(() => {
   const parts = props.prefix.split("/").filter(Boolean);
@@ -20,6 +28,10 @@ const segments = computed(() => {
 
 <template>
   <nav class="breadcrumb">
+    <template v-if="showBucketsRoot">
+      <a href="#" @click.prevent="emit('showBuckets')">桶列表</a>
+      <span class="sep">/</span>
+    </template>
     <template v-for="(s, i) in segments" :key="s.prefix">
       <span v-if="i > 0" class="sep">/</span>
       <a

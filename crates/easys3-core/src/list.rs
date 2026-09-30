@@ -113,12 +113,17 @@ pub async fn list_objects(
 }
 
 /// 递归列出前缀下全部对象 key（用于文件夹下载/删除/统计）。
-/// 跳过目录占位对象（0 字节 / 结尾对象不可下载，规格）。
+///
+/// **不带 delimiter** 分页拉取，天然覆盖任意子层级（规格：递归列出全部对象；
+/// 旧实现复用带 delimiter 的列表查询，深层对象永远不会被列出，已修复）。
+/// `include_dir_placeholders = true` 时包含目录占位对象（删除前缀时须随前缀
+/// 一并删除，规格 §1/§4）；下载传 `false`（占位对象不可下载，规格 §3）。
 pub async fn collect_prefix_objects(
     client: &Client,
     bucket: &str,
     prefix: &str,
     cancel: &Arc<AtomicBool>,
+    include_dir_placeholders: bool,
 ) -> Result<Vec<String>, CoreError> {
     let mut keys = Vec::new();
     let mut token: Option<String> = None;
@@ -126,18 +131,37 @@ pub async fn collect_prefix_objects(
         if cancel.load(Ordering::Relaxed) {
             return Err(CoreError::Cancelled);
         }
-        let r = list_objects(client, bucket, prefix, token.as_deref()).await?;
-        keys.extend(
-            r.entries
-                .iter()
-                .filter(|e| !e.is_dir)
-                .map(|e| e.key.clone()),
-        );
-        token = r.next_token;
+        let mut req = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .max_keys(PAGE_SIZE);
+        if let Some(t) = &token {
+            req = req.continuation_token(t);
+        }
+        let out = req.send().await.map_err(|e| classify(&e))?;
+        for o in out.contents() {
+            let key = o.key().unwrap_or_default();
+            if key.is_empty() {
+                continue;
+            }
+            let size = o.size().unwrap_or(0).max(0);
+            if !include_dir_placeholders && is_dir_marker(key, size) {
+                continue;
+            }
+            keys.push(key.to_string());
+        }
+        token = out.next_continuation_token().map(|t| t.to_string());
         if token.is_none() {
             return Ok(keys);
         }
     }
+}
+
+/// 目录占位对象：key 以 `/` 结尾且 0 字节（UI 渲染为文件夹，规格 §1）。
+/// 与 `list_objects` 的渲染判定保持一致：非 0 字节的 `/` 结尾 key 仍按对象处理。
+pub fn is_dir_marker(key: &str, size: i64) -> bool {
+    key.ends_with('/') && size == 0
 }
 
 /// key 的显示名：去掉结尾的 / 后取最后一段。支持中文/空格/Unicode（规格）。
@@ -151,7 +175,7 @@ pub fn name_of(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::name_of;
+    use super::{is_dir_marker, name_of};
 
     #[test]
     fn name_of_variants() {
@@ -161,5 +185,17 @@ mod tests {
         assert_eq!(name_of("单个文件.log"), "单个文件.log");
         assert_eq!(name_of("带 空格/文件 名.tar.gz"), "文件 名.tar.gz");
         assert_eq!(name_of("root"), "root");
+    }
+
+    #[test]
+    fn dir_marker_rules() {
+        // 占位对象：/ 结尾且 0 字节（与 list_objects 渲染判定一致）
+        assert!(is_dir_marker("a/", 0));
+        assert!(is_dir_marker("a/b/", 0));
+        // 非 0 字节的 / 结尾 key 按普通对象处理（可下载）
+        assert!(!is_dir_marker("a/", 128));
+        // 普通对象
+        assert!(!is_dir_marker("a/b.txt", 0));
+        assert!(!is_dir_marker("a", 0));
     }
 }

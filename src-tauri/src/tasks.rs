@@ -313,7 +313,8 @@ pub fn spawn_download_expand(
             }
             if item.is_dir {
                 let prefix = item.key.clone();
-                match collect_prefix_objects(&client, &bucket, &prefix, &cancel).await {
+                // false = 下载不含目录占位对象（规格 §3）
+                match collect_prefix_objects(&client, &bucket, &prefix, &cancel, false).await {
                     Ok(keys) => jobs.extend(keys.into_iter().map(|k| {
                         let rel = k
                             .strip_prefix(prefix.as_str())
@@ -425,7 +426,8 @@ pub fn spawn_delete_expand(
             }
             if item.is_dir {
                 let prefix = item.key.clone();
-                match collect_prefix_objects(&client, &bucket, &prefix, &cancel).await {
+                // true = 删除含目录占位对象（随前缀一并删除，规格 §4）
+                match collect_prefix_objects(&client, &bucket, &prefix, &cancel, true).await {
                     Ok(ks) => keys.extend(ks),
                     Err(CoreError::Cancelled) => break,
                     Err(e) => record_failure(&shared, &prefix, format!("列出对象失败：{e}")),

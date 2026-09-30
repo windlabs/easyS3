@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import * as api from "./api";
@@ -50,6 +51,18 @@ const previewName = ref("");
 // ---------- 拖拽上传 ----------
 const dragging = ref(false);
 
+// ---------- 退出保护（规格：仍有进行中任务时关窗需二次确认） ----------
+const showCloseConfirm = ref(false);
+
+function runningTaskCount(): number {
+  return store.tasksStore.tasks.filter((t) => t.status === "running").length;
+}
+
+async function confirmQuit() {
+  showCloseConfirm.value = false;
+  await getCurrentWindow().destroy();
+}
+
 // 前缀筛选防抖（规格：前缀语义，非子串搜索）
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
 function onFilterInput(e: Event) {
@@ -75,6 +88,12 @@ onMounted(async () => {
       dragging.value = false;
     }
     if (p.type === "drop") void beginUpload(p.paths);
+  });
+  // 退出保护：仍有进行中任务时拦截关窗，二次确认后退出（规格）
+  await getCurrentWindow().onCloseRequested((ev) => {
+    if (!runningTaskCount()) return;
+    ev.preventDefault();
+    showCloseConfirm.value = true;
   });
 });
 
@@ -273,6 +292,14 @@ async function copyKey(entry: Entry) {
           </a>
         </template>
       </div>
+      <div
+        v-else-if="store.browse.mode === 'objects' && !store.currentConnection()?.default_bucket"
+        class="bucket-list"
+      >
+        <a class="bucket-item" title="返回桶列表" @click="store.backToBuckets()">
+          <span class="bucket-icon">⬅️</span>返回桶列表
+        </a>
+      </div>
     </aside>
 
     <main class="main">
@@ -298,7 +325,9 @@ async function copyKey(entry: Entry) {
             v-if="store.browse.mode === 'objects'"
             :bucket="store.browse.bucket"
             :prefix="store.browse.prefix"
+            :show-buckets-root="!store.currentConnection()?.default_bucket"
             @navigate="store.navigatePrefix"
+            @show-buckets="store.backToBuckets()"
           />
           <div v-else class="bucket-label">桶列表</div>
           <div class="spacer" />
@@ -377,6 +406,17 @@ async function copyKey(entry: Entry) {
         即将删除 <b>{{ deleteCount }}</b> 个对象（含文件夹内的全部对象）。
       </p>
       <p class="warn-text">删除操作不可恢复，请确认。</p>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      v-model="showCloseConfirm"
+      title="确认退出"
+      ok-text="仍要退出"
+      danger
+      @confirm="confirmQuit"
+    >
+      <p>当前仍有 <b>{{ runningTaskCount() }}</b> 个进行中的传输任务。</p>
+      <p class="warn-text">退出会中断这些任务，且进度不会保留。</p>
     </ConfirmDialog>
 
     <ConflictDialog

@@ -11,6 +11,18 @@ export interface ConnectionConfig {
   secret_key: string;
   force_path_style: boolean;
   default_bucket?: string | null;
+  /** 可选；服务用自签证书时指定 CA 证书（PEM 编码）文件路径 */
+  ca_cert_path?: string | null;
+  /** 最近一次「测试连接」结果（后端随配置持久化；连接字段变更后由后端清空） */
+  last_test?: LastTest | null;
+}
+
+/** 最近一次「测试连接」结果 */
+export interface LastTest {
+  ok: boolean;
+  msg: string;
+  /** Unix 时间戳（秒） */
+  at: number;
 }
 
 export interface StateDto {
@@ -88,5 +100,7 @@ export function blankConnection(): ConnectionConfig {
     secret_key: "",
     force_path_style: true,
     default_bucket: null,
+    ca_cert_path: null,
+    last_test: null,
   };
 }

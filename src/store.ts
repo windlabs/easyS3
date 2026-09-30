@@ -89,6 +89,15 @@ export async function enterConnection() {
   }
 }
 
+export async function backToBuckets() {
+  const p = currentConnection();
+  // 限定单桶连接无桶列表，不提供返回入口（规格）
+  if (!p || p.default_bucket) return;
+  selection.clear();
+  browse.filter = "";
+  await loadBuckets();
+}
+
 async function loadBuckets() {
   browse.mode = "buckets";
   browse.loading = true;
