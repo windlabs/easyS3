@@ -46,6 +46,32 @@ function fileStats(t: TaskInfo): string {
   if (t.files_failed > 0) parts.push(`失败 ${t.files_failed}`);
   return parts.join("，");
 }
+
+// 传输速度：按 task-update 事件增量估算（≥500ms 窗口均值），纯前端计算
+const speedSamples = new Map<string, { bytes: number; ts: number; speed: number }>();
+
+function sampleSpeed(t: TaskInfo): number | null {
+  if (t.status !== "running" || t.kind === "delete" || t.bytes_total <= 0) {
+    return null;
+  }
+  const now = Date.now();
+  const prev = speedSamples.get(t.id);
+  if (!prev) {
+    speedSamples.set(t.id, { bytes: t.bytes_done, ts: now, speed: 0 });
+    return null;
+  }
+  const dt = (now - prev.ts) / 1000;
+  if (dt < 0.5) return prev.speed > 0 ? prev.speed : null;
+  const speed = Math.max(0, t.bytes_done - prev.bytes) / dt;
+  speedSamples.set(t.id, { bytes: t.bytes_done, ts: now, speed });
+  return speed;
+}
+
+const speeds = computed(() => {
+  const m = new Map<string, number | null>();
+  for (const t of tasksStore.tasks) m.set(t.id, sampleSpeed(t));
+  return m;
+});
 </script>
 
 <template>
@@ -93,6 +119,9 @@ function fileStats(t: TaskInfo): string {
         <div class="task-line stats muted">
           <span>{{ fileStats(t) }}</span>
           <span>· {{ progressText(t) }}</span>
+          <span v-if="speeds.get(t.id) != null" class="speed">
+            · {{ formatBytes(speeds.get(t.id) ?? 0) }}/s
+          </span>
         </div>
         <div v-if="t.status === 'running'" class="progress">
           <div
@@ -216,6 +245,9 @@ function fileStats(t: TaskInfo): string {
 .stats {
   margin-top: 4px;
   gap: 4px;
+}
+.stats .speed {
+  white-space: nowrap;
 }
 .current {
   margin-top: 4px;

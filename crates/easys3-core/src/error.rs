@@ -20,7 +20,7 @@ pub enum ErrorKind {
     Unknown,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum CoreError {
     /// S3 服务端/网络错误，message 为中文用户提示
     #[error("{message}")]

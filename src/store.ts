@@ -50,10 +50,14 @@ let toastSeq = 0;
 export function toast(text: string, kind: "info" | "error" = "info") {
   const id = ++toastSeq;
   toasts.list.push({ id, text, kind });
-  setTimeout(() => {
-    const i = toasts.list.findIndex((t) => t.id === id);
-    if (i >= 0) toasts.list.splice(i, 1);
-  }, 4000);
+  // 错误提示停留更久（规格），便于阅读与排查
+  setTimeout(
+    () => {
+      const i = toasts.list.findIndex((t) => t.id === id);
+      if (i >= 0) toasts.list.splice(i, 1);
+    },
+    kind === "error" ? 8000 : 4000,
+  );
 }
 
 // ---------- 动作 ----------

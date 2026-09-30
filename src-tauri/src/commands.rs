@@ -485,12 +485,9 @@ pub fn get_tasks(state: State<App>) -> Vec<TaskInfo> {
 #[tauri::command]
 pub fn clear_finished_tasks(state: State<App>) -> Result<(), String> {
     let mut inner = lock(&state.inner);
-    inner.tasks.retain(|_, e| {
-        e.shared
-            .info
-            .lock()
-            .map(|i| i.status == TaskStatus::Running)
-            .unwrap_or(false)
-    });
+    // 锁毒化按“仍在运行”处理（保留条目），与项目防毒化约定一致，避免误清运行中任务
+    inner
+        .tasks
+        .retain(|_, e| lock(&e.shared.info).status == TaskStatus::Running);
     Ok(())
 }

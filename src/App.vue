@@ -14,7 +14,7 @@ import type {
   ConnectionConfig,
   UploadPlan,
 } from "./types";
-import { errorMessage, formatBytes } from "./utils";
+import { errorMessage, formatBytes, uuid } from "./utils";
 import Breadcrumb from "./components/Breadcrumb.vue";
 import ObjectTable from "./components/ObjectTable.vue";
 import TaskCenter from "./components/TaskCenter.vue";
@@ -99,9 +99,22 @@ onMounted(async () => {
 
 // ---------- 连接 ----------
 
-function openConnectionDialog(connection: ConnectionConfig | null) {
+const copyMode = ref(false);
+
+function openConnectionDialog(connection: ConnectionConfig | null, copy = false) {
   editingConnection.value = connection;
+  copyMode.value = copy;
   showConnectionDialog.value = true;
+}
+
+/** 复制连接：以现有连接为模板新建（规格：预填配置、新 id、名称加后缀、测试结果不复制） */
+function copyConnection() {
+  const src = store.currentConnection();
+  if (!src) return;
+  openConnectionDialog(
+    { ...src, id: uuid(), name: `${src.name} 副本`, last_test: null },
+    true,
+  );
 }
 
 async function onConnectionChanged() {
@@ -272,6 +285,13 @@ async function copyKey(entry: Entry) {
           >
             编辑
           </button>
+          <button
+            class="btn sm"
+            :disabled="!store.app.currentConnectionId"
+            @click="copyConnection"
+          >
+            复制
+          </button>
         </div>
       </div>
       <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
@@ -341,6 +361,9 @@ async function copyKey(entry: Entry) {
             <button class="btn" @click="pickUpload(false)">上传文件</button>
             <button class="btn" @click="pickUpload(true)">上传文件夹</button>
           </template>
+          <span v-if="store.selection.size" class="selected-count">
+            已选 {{ store.selection.size }} 项
+          </span>
           <button class="btn" :disabled="!store.selection.size" @click="downloadSelection">
             下载
           </button>
@@ -377,6 +400,7 @@ async function copyKey(entry: Entry) {
     <ConnectionDialog
       v-model="showConnectionDialog"
       :connection="editingConnection"
+      :copy="copyMode"
       @saved="onConnectionChanged"
       @deleted="onConnectionChanged"
     />
@@ -465,6 +489,7 @@ async function copyKey(entry: Entry) {
 .connection-actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 .connection-actions .btn {
   flex: 1;
@@ -533,6 +558,11 @@ async function copyKey(entry: Entry) {
 }
 .filter {
   width: 160px;
+}
+.selected-count {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .drop-overlay {
   position: fixed;

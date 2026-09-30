@@ -474,22 +474,18 @@ async fn run_delete_keys(
     cancel: &Arc<AtomicBool>,
     shared: &Arc<TaskShared>,
 ) {
-    match delete_keys(client, bucket, &keys, cancel.clone()).await {
-        Ok(report) => {
-            let mut gi = lock(&shared.info);
-            gi.files_done = report.deleted;
-            gi.failures = report
-                .failures
-                .iter()
-                .map(|f| Failure {
-                    key: f.key.clone(),
-                    error: f.message.clone(),
-                })
-                .collect();
-            gi.files_failed = gi.failures.len();
-        }
-        Err(CoreError::Cancelled) => {}
-        Err(e) => record_failure(shared, "-", e.to_string()),
+    // 批量执行：部分成功也如实计入进度；请求级失败的剩余对象
+    // 已由 delete_keys 逐个记入失败（真实 key，重试可命中，规格 §4）
+    let outcome = delete_keys(client, bucket, &keys, cancel.clone()).await;
+    {
+        let mut gi = lock(&shared.info);
+        gi.files_done += outcome.report.deleted;
+        gi.files_failed += outcome.report.failures.len();
+        gi.failures
+            .extend(outcome.report.failures.into_iter().map(|f| Failure {
+                key: f.key,
+                error: f.message,
+            }));
     }
     finish_task(app, cancel, shared);
 }

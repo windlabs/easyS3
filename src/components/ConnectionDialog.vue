@@ -9,8 +9,10 @@ import { useMaskClose } from "./useMaskClose";
 
 const props = defineProps<{
   modelValue: boolean;
-  /** null = 新建；否则为编辑目标 */
+  /** null = 新建；否则为编辑目标（copy = true 时为复制模板，按新建处理） */
   connection: ConnectionConfig | null;
+  /** 复制模式：connection 作为预填模板（已带新 id），按新建处理、不显示删除按钮 */
+  copy?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -35,7 +37,7 @@ watch(
     if (!open) return;
     // 先铺默认值再覆盖，避免可选字段残留上一次编辑的值
     Object.assign(form, blankConnection(), props.connection ?? blankConnection());
-    isEdit.value = !!props.connection;
+    isEdit.value = !!props.connection && !props.copy;
     showSecret.value = false;
     testing.value = false;
     // 用已持久化的最近一次测试结果初始化（规格：UI 展示最近一次测试结果）
