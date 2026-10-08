@@ -9,6 +9,8 @@
 [![Vue 3](https://img.shields.io/badge/Vue-3-42b883.svg)](https://vuejs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
+**简体中文** · [English](README.en.md)
+
 ---
 
 ## 目录
@@ -62,12 +64,24 @@ easyS3 想把「查看桶里有什么、把文件拖进去、把产物拉下来�
 
 ## 界面与交互
 
+主界面：左侧为「连接 + 桶」导航，右侧为对象列表，顶部面包屑显示当前桶 / 目录路径并可逐级返回。
+
+![对象列表](docs/screenshots/objects.png)
+
+| 桶列表 | 新建连接 |
+| :---: | :---: |
+| ![桶列表](docs/screenshots/buckets.png) | ![新建连接](docs/screenshots/connection.png) |
+
+| 对象预览 | 任务中心 |
+| :---: | :---: |
+| ![对象预览](docs/screenshots/preview.png) | ![任务中心](docs/screenshots/tasks.png) |
+
 - 左侧为「连接 + 桶」选择区，右侧为对象列表；顶部面包屑显示当前桶 / 目录路径，可点击逐级返回。
 - 传输任务中心是全局浮窗，进行中的任务展示实时进度，失败任务提供「重试」。
 - 空状态友好：没有连接时显示新建引导页，空桶 / 空目录显示占位提示。
 - 支持拖拽上传：从系统文件管理器拖入文件或文件夹即可上传到当前目录。
 
-> 界面截图将在后续版本补充，欢迎在 Issue 中反馈配图。
+> 截图使用演示数据（虚构的连接与对象），用于展示界面形态。
 
 ## 下载与安装
 
