@@ -36,3 +36,21 @@ cargo test -p easys3-core
 - 不要提交构建产物、编辑器配置、密钥或本地配置文件。
 
 项目维护者会在审查中关注正确性、安全性、跨平台兼容性和可维护性。
+
+## 版本发布
+
+发布通过 GitHub Actions 自动完成（见 `.github/workflows/release.yml`）：推送 `v*` 标签即触发三平台（Windows NSIS / Linux AppImage + deb / macOS dmg，覆盖 Intel 与 Apple Silicon）矩阵构建，产物汇总为 **Draft Release**，由维护者核对后手动发布。日常发版步骤：
+
+```bash
+make version VERSION=1.2.3          # 同步 package.json / Cargo.toml / tauri.conf.json 版本号
+git commit -am "chore(release): 1.2.3"
+git tag v1.2.3
+git push origin main v1.2.3         # 触发 Release 工作流
+```
+
+注意事项：
+
+- **tag 必须与应用版本一致**（`v1.2.3` 对应版本 `1.2.3`），不一致时工作流会在校验步骤直接失败。
+- 工作流产出的是 Draft Release，请在 GitHub Releases 页面核对资产（5 个安装包 + `SHA256SUMS.txt`）、补充发布说明后再点 Publish。
+- 已发布的版本发现问题时，走新的 patch 版本重新发布；**不要删除或复用已发布的 tag**。
+- 首次构建较慢（LTO + 单 codegen-units），三平台全量约 20–40 分钟，后续有 Rust 缓存会明显加速。
