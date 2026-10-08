@@ -89,9 +89,9 @@ easyS3 想把「查看桶里有什么、把文件拖进去、把产物拉下来�
 
 | 平台 | 安装包格式 |
 |------|-----------|
-| Windows | NSIS 安装程序（`.exe`） |
+| Windows | NSIS 安装程序（`.exe`，x64） |
 | Linux | AppImage、`.deb`（覆盖 x86_64 与 ARM64） |
-| macOS | `.dmg` / `.app`（覆盖 Intel 与 Apple Silicon） |
+| macOS | `.dmg`（覆盖 Intel 与 Apple Silicon） |
 
 > 注意：**macOS 安装包必须在 macOS 上构建**，Tauri 不支持 macOS 交叉编译。当前不含自动更新，需要手动下载新版本覆盖安装。
 

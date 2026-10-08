@@ -19,8 +19,15 @@ jobs:
       matrix:
         include:
           # Linux x86_64：AppImage + deb
+          # （选 ubuntu-22.04 而非更新版本是为了压低 glibc 门槛（2.35），
+          #   该镜像 2027-04 退役，届时需重新评估构建基线）
           - platform: ubuntu-22.04
             rust_target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+          # Linux ARM64：公开仓库免费的原生 arm64 runner
+          # （glibc ≥ 2.39，覆盖 Ubuntu 24.04+ / Debian 13+ 等）
+          - platform: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
             bundles: appimage,deb
           # Windows x64：NSIS 安装程序
           - platform: windows-latest
@@ -66,7 +73,7 @@ jobs:
           key: ${{ matrix.rust_target }}
 
       - name: 安装 Linux 系统依赖
-        if: matrix.platform == 'ubuntu-22.04'
+        if: startsWith(matrix.platform, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev

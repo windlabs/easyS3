@@ -89,9 +89,9 @@ Release packages are built per platform and available from the project's GitHub 
 
 | Platform | Package format |
 |----------|----------------|
-| Windows | NSIS installer (`.exe`) |
+| Windows | NSIS installer (`.exe`, x64) |
 | Linux | AppImage, `.deb` (x86_64 and ARM64) |
-| macOS | `.dmg` / `.app` (Intel and Apple Silicon) |
+| macOS | `.dmg` (Intel and Apple Silicon) |
 
 > Note: **macOS packages must be built on macOS** — Tauri does not support cross-compiling to macOS. There is no auto-update yet; download a new version and install it over the old one.
 
