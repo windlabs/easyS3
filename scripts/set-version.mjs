@@ -19,13 +19,13 @@ for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
 }
 
 const cargo = readFileSync("Cargo.toml", "utf8");
-const updated = cargo.replace(
-  /(\[workspace\.package\][\s\S]*?\nversion\s*=\s*)"[^"]*"/,
-  (_, prefix) => `${prefix}"${version}"`
-);
-if (updated === cargo) {
+const versionRe = /(\[workspace\.package\][\s\S]*?\nversion\s*=\s*)"[^"]*"/;
+if (!versionRe.test(cargo)) {
   console.error("未在 Cargo.toml 的 [workspace.package] 中找到 version 字段");
   process.exit(1);
 }
+const updated = cargo.replace(versionRe, (_, prefix) => `${prefix}"${version}"`);
 writeFileSync("Cargo.toml", updated);
-console.log(`项目版本已更新为 ${version}`);
+console.log(
+  updated === cargo ? `项目版本已为 ${version}，无需更新` : `项目版本已更新为 ${version}`
+);
