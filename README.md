@@ -95,6 +95,22 @@ easyS3 想把「查看桶里有什么、把文件拖进去、把产物拉下来�
 
 > 注意：**macOS 安装包必须在 macOS 上构建**，Tauri 不支持 macOS 交叉编译。当前不含自动更新，需要手动下载新版本覆盖安装。
 
+### 安装包未签名
+
+当前发布包**未做代码签名**，首次安装或打开时系统弹出安全提示属正常现象：
+
+| 平台 | 可能的提示 | 处理方式 |
+|------|-----------|---------|
+| Windows | SmartScreen「Windows 已保护你的电脑」 | 点「更多信息」→「仍要运行」 |
+| macOS | Gatekeeper「无法验证开发者」或「已损坏，无法打开」 | 右键应用 →「打开」；或执行 `xattr -cr /Applications/easyS3.app` |
+| Linux | AppImage 无执行权限 | `chmod +x easyS3_*.AppImage` |
+
+建议下载后使用 Releases 附带的 `SHA256SUMS.txt` 校验完整性（Windows 可用 `certutil -hashfile <文件名> SHA256`）：
+
+```bash
+sha256sum -c SHA256SUMS.txt
+```
+
 ## 从源码构建
 
 ### 前置条件

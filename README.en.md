@@ -95,6 +95,22 @@ Release packages are built per platform and available from the project's GitHub 
 
 > Note: **macOS packages must be built on macOS** — Tauri does not support cross-compiling to macOS. There is no auto-update yet; download a new version and install it over the old one.
 
+### Unsigned installers
+
+Release packages are currently **not code-signed**, so a security warning on first install or launch is expected:
+
+| Platform | Possible warning | What to do |
+|----------|------------------|------------|
+| Windows | SmartScreen: "Windows protected your PC" | Click "More info" → "Run anyway" |
+| macOS | Gatekeeper: "cannot verify the developer" or "damaged and can't be opened" | Right-click the app → "Open"; or run `xattr -cr /Applications/easyS3.app` |
+| Linux | AppImage has no execute permission | `chmod +x easyS3_*.AppImage` |
+
+Verify downloads against the `SHA256SUMS.txt` attached to each release (on Windows: `certutil -hashfile <file> SHA256`):
+
+```bash
+sha256sum -c SHA256SUMS.txt
+```
+
 ## Build from Source
 
 ### Prerequisites
