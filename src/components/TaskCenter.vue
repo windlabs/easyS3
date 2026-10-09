@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { cancelTask, clearFinished, retryTask, tasksStore } from "../store";
+import {
+  cancelTask,
+  clearFinished,
+  retryTask,
+  setTasksHover,
+  tasksStore,
+} from "../store";
 import type { TaskInfo } from "../types";
 import { formatBytes } from "../utils";
 
@@ -8,8 +14,10 @@ const kindLabel: Record<TaskInfo["kind"], string> = {
   upload: "上传",
   download: "下载",
   delete: "删除",
+  copy: "复制/移动",
 };
 const statusLabel: Record<TaskInfo["status"], string> = {
+  queued: "排队中",
   running: "进行中",
   done: "已完成",
   failed: "失败",
@@ -20,11 +28,14 @@ const runningCount = computed(
   () => tasksStore.tasks.filter((t) => t.status === "running").length,
 );
 const hasFinished = computed(() =>
-  tasksStore.tasks.some((t) => t.status !== "running"),
+  tasksStore.tasks.some((t) => t.status !== "running" && t.status !== "queued"),
 );
 
+// 复制/移动与删除按对象计数展示进度（无本地字节流）
+const countKind = (t: TaskInfo) => t.kind === "delete" || t.kind === "copy";
+
 function percent(t: TaskInfo): number | null {
-  if (t.kind === "delete") {
+  if (countKind(t)) {
     return t.files_total > 0
       ? Math.round((t.files_done / t.files_total) * 100)
       : null;
@@ -36,7 +47,7 @@ function percent(t: TaskInfo): number | null {
 }
 
 function progressText(t: TaskInfo): string {
-  if (t.kind === "delete") return `${t.files_done} / ${t.files_total} 个`;
+  if (countKind(t)) return `${t.files_done} / ${t.files_total} 个`;
   return `${formatBytes(t.bytes_done)} / ${formatBytes(t.bytes_total)}`;
 }
 
@@ -44,6 +55,7 @@ function fileStats(t: TaskInfo): string {
   const parts = [`文件 ${t.files_done}/${t.files_total}`];
   if (t.files_skipped > 0) parts.push(`跳过 ${t.files_skipped}`);
   if (t.files_failed > 0) parts.push(`失败 ${t.files_failed}`);
+  if (t.retry_count > 0) parts.push(`自动重试 ${t.retry_count} 次`);
   return parts.join("，");
 }
 
@@ -51,7 +63,7 @@ function fileStats(t: TaskInfo): string {
 const speedSamples = new Map<string, { bytes: number; ts: number; speed: number }>();
 
 function sampleSpeed(t: TaskInfo): number | null {
-  if (t.status !== "running" || t.kind === "delete" || t.bytes_total <= 0) {
+  if (t.status !== "running" || countKind(t) || t.bytes_total <= 0) {
     return null;
   }
   const now = Date.now();
@@ -75,7 +87,12 @@ const speeds = computed(() => {
 </script>
 
 <template>
-  <div v-if="tasksStore.tasks.length" class="task-center">
+  <div
+    v-if="tasksStore.tasks.length"
+    class="task-center"
+    @mouseenter="setTasksHover(true)"
+    @mouseleave="setTasksHover(false)"
+  >
     <div class="task-head" @click="tasksStore.open = !tasksStore.open">
       <span class="title">传输任务</span>
       <span v-if="runningCount" class="badge">{{ runningCount }}</span>
@@ -102,14 +119,14 @@ const speeds = computed(() => {
           <span class="status" :class="t.status">{{ statusLabel[t.status] }}</span>
           <span class="spacer" />
           <button
-            v-if="t.status === 'running'"
+            v-if="t.status === 'running' || t.status === 'queued'"
             class="btn sm"
             @click="cancelTask(t.id)"
           >
             取消
           </button>
           <button
-            v-if="t.status !== 'running' && t.failures.length"
+            v-if="t.status !== 'running' && t.status !== 'queued' && t.failures.length"
             class="btn sm"
             @click="retryTask(t.id)"
           >
@@ -166,7 +183,7 @@ const speeds = computed(() => {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 8px 32px var(--shadow);
   z-index: 200;
   overflow: hidden;
 }
@@ -176,7 +193,7 @@ const speeds = computed(() => {
   gap: 8px;
   padding: 10px 14px;
   cursor: pointer;
-  background: #fafbfc;
+  background: var(--header-bg);
   border-bottom: 1px solid var(--border);
 }
 .task-head .title {
@@ -260,7 +277,7 @@ const speeds = computed(() => {
   margin-top: 6px;
   height: 4px;
   border-radius: 2px;
-  background: #edf0f4;
+  background: var(--progress-bg);
   overflow: hidden;
 }
 .progress .bar {
@@ -283,7 +300,7 @@ const speeds = computed(() => {
 }
 .failures {
   margin-top: 6px;
-  background: #fdf5f5;
+  background: var(--failure-bg);
   border-radius: 6px;
   padding: 6px 8px;
 }

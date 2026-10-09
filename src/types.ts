@@ -36,7 +36,32 @@ export interface Entry {
   name: string;
   size: number;
   last_modified: string | null;
+  storage_class: string | null;
   is_dir: boolean;
+}
+
+export interface ObjectDetail {
+  key: string;
+  size: number;
+  last_modified: string | null;
+  e_tag: string | null;
+  storage_class: string | null;
+  content_type: string | null;
+  metadata: { key: string; value: string }[];
+}
+
+export interface MultipartUploadInfo {
+  key: string;
+  upload_id: string;
+  initiated: string | null;
+  storage_class: string | null;
+}
+
+export interface MultipartPartInfo {
+  part_number: number;
+  size: number;
+  last_modified: string | null;
+  e_tag: string | null;
 }
 
 export interface ListResult {
@@ -67,8 +92,8 @@ export interface Failure {
   error: string;
 }
 
-export type TaskKind = "upload" | "download" | "delete";
-export type TaskStatus = "running" | "done" | "failed" | "canceled";
+export type TaskKind = "upload" | "download" | "delete" | "copy";
+export type TaskStatus = "queued" | "running" | "done" | "failed" | "canceled";
 
 export interface TaskInfo {
   id: string;
@@ -83,12 +108,25 @@ export interface TaskInfo {
   bytes_done: number;
   current_file: string | null;
   failures: Failure[];
+  /** 瞬时错误自动重试累计次数 */
+  retry_count: number;
   created_at: number;
+}
+
+export interface TransferSettings {
+  auto_retry_count: number;
+  upload_limit_kbps: number;
+  download_limit_kbps: number;
+  file_concurrency: number;
+  part_size_mb: number;
+  max_concurrent_tasks: number;
+  preview_limit_mb: number;
 }
 
 export type PreviewData =
   | { kind: "text"; content: string }
-  | { kind: "image"; mime: string; data_base64: string };
+  | { kind: "image"; mime: string; data_base64: string }
+  | { kind: "media"; mime: string; data_base64: string };
 
 export function blankConnection(): ConnectionConfig {
   return {

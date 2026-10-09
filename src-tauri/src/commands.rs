@@ -7,6 +7,7 @@ use easys3_core::config::{connection_fields_changed, validate_connection, Connec
 use easys3_core::list::ListResult;
 use easys3_core::plan::{collect_upload_files, item_matches_failure};
 use easys3_core::preview::PreviewData;
+use easys3_core::settings::{save_settings, TransferSettings};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -24,14 +25,40 @@ pub struct StateDto {
 #[tauri::command]
 pub fn get_state(state: State<App>) -> StateDto {
     let inner = lock(&state.inner);
+    let mut connections = inner.file.connections.clone();
+    for connection in &mut connections {
+        connection.secret_key.clear();
+    }
     StateDto {
-        connections: inner.file.connections.clone(),
+        connections,
         current_connection_id: inner.file.current_connection_id.clone(),
     }
 }
 
 #[tauri::command]
 pub fn save_connection(state: State<App>, connection: ConnectionConfig) -> Result<(), String> {
+    let connection_id = connection.id.clone();
+    let supplied_secret = connection.secret_key.trim().to_string();
+    let existing_secret = {
+        let inner = lock(&state.inner);
+        inner
+            .file
+            .connections
+            .iter()
+            .find(|item| item.id == connection.id)
+            .and_then(|_| state.secrets.get(&connection.id).ok().flatten())
+    };
+    let mut connection = connection;
+    if supplied_secret.is_empty() {
+        connection.secret_key = existing_secret.clone().unwrap_or_default();
+    }
+    if connection.secret_key.is_empty() {
+        return Err("Secret Key 不能为空".to_string());
+    }
+    // 先持久化密钥；失败时不改变连接配置或客户端缓存。
+    if !supplied_secret.is_empty() {
+        state.secrets.set(&connection_id, &supplied_secret)?;
+    }
     {
         let mut inner = lock(&state.inner);
         if let Err(errs) = validate_connection(&connection, &inner.file.connections) {
@@ -45,13 +72,20 @@ pub fn save_connection(state: State<App>, connection: ConnectionConfig) -> Resul
         {
             Some(existing) => {
                 let mut updated = connection.clone();
+                let mut old_for_compare = existing.clone();
+                old_for_compare.secret_key = existing_secret.unwrap_or_default();
                 // 连接相关字段变更后，已持久化的测试结果作废清空（规格）
-                if connection_fields_changed(existing, &updated) {
+                if connection_fields_changed(&old_for_compare, &updated) {
                     updated.last_test = None;
                 }
+                updated.secret_key.clear();
                 *existing = updated;
             }
-            None => inner.file.connections.push(connection.clone()),
+            None => {
+                let mut saved = connection.clone();
+                saved.secret_key.clear();
+                inner.file.connections.push(saved);
+            }
         }
         // 配置变更后重建该连接的 S3 客户端（传输 + 控制面两类缓存）
         inner.clients.remove(&connection.id);
@@ -75,6 +109,7 @@ pub fn delete_connection(state: State<App>, id: String) -> Result<(), String> {
             inner.file.current_connection_id = inner.file.connections.first().map(|p| p.id.clone());
         }
     }
+    state.secrets.delete(&id);
     state.save_file()
 }
 
@@ -91,7 +126,16 @@ pub fn set_current_connection(state: State<App>, id: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub async fn test_connection(connection: ConnectionConfig) -> Result<(), String> {
+pub async fn test_connection(
+    state: State<'_, App>,
+    mut connection: ConnectionConfig,
+) -> Result<(), String> {
+    if connection.secret_key.trim().is_empty() {
+        connection.secret_key = state
+            .secrets
+            .get(&connection.id)?
+            .ok_or("未找到该连接的 Secret Key，请在连接设置中重新填写")?;
+    }
     easys3_core::s3::test_connection(&connection)
         .await
         .map_err(|e| e.to_string())
@@ -141,7 +185,215 @@ pub async fn preview_object(
     key: String,
 ) -> Result<PreviewData, String> {
     let (client, _) = state.current_control_client()?;
-    easys3_core::preview::preview_object(&client, &bucket, &key)
+    let media_limit = state.transfer_settings().preview_limit_bytes();
+    easys3_core::preview::preview_object(&client, &bucket, &key, media_limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn is_download_directory(dest: String) -> bool {
+    std::path::Path::new(&dest).is_dir()
+}
+
+// ---------- 传输设置（自动重试 / 限速 / 并发 / 分片） ----------
+
+/// "打开"（P0-10）：下载对象到系统临时目录，完成后用默认程序打开。
+/// 进度经任务中心反馈、不阻塞界面；临时目录在应用退出时清理。返回任务 id。
+#[tauri::command]
+pub fn open_object(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    key: String,
+) -> Result<String, String> {
+    let (client, _) = state.current_client()?;
+    // 仅取 key 末段作为文件名，剥离路径分隔符，避免目录穿越
+    let raw = key.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    let basename: String = raw
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c == '\0' {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let basename = if basename.is_empty() {
+        "object".to_string()
+    } else {
+        basename
+    };
+    let dest = crate::state::open_temp_dir().join(basename);
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(&id, TaskKind::Download, &bucket, 1, 0));
+    {
+        let mut inner = lock(&state.inner);
+        inner.tasks.insert(
+            id.clone(),
+            TaskEntry {
+                cancel: cancel.clone(),
+                shared: shared.clone(),
+                retry: Arc::new(Mutex::new(None)),
+            },
+        );
+    }
+    let settings = state.transfer_settings();
+    tasks::spawn_open(
+        app,
+        client,
+        bucket,
+        key,
+        dest,
+        cancel,
+        shared,
+        settings.auto_retry_count as usize,
+        state.download_throttle.clone(),
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<App>) -> TransferSettings {
+    state.transfer_settings()
+}
+
+/// 保存设置：先热更新限速与并发上限（进行中任务即时生效），再落盘。
+#[tauri::command]
+pub fn save_transfer_settings(state: State<App>, settings: TransferSettings) -> Result<(), String> {
+    let settings = settings.sanitized();
+    state
+        .upload_throttle
+        .set_rate_bps(settings.upload_limit_kbps.saturating_mul(1024));
+    state
+        .download_throttle
+        .set_rate_bps(settings.download_limit_kbps.saturating_mul(1024));
+    tasks::set_max_concurrent_tasks(settings.max_concurrent_tasks);
+    save_settings(&state.settings_path, &settings)?;
+    *lock(&state.settings) = settings;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn object_detail(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+) -> Result<easys3_core::object::ObjectDetail, String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::head_object(&client, &bucket, &key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_folder(
+    state: State<'_, App>,
+    bucket: String,
+    prefix: String,
+    name: String,
+) -> Result<(), String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::create_folder(&client, &bucket, &prefix, &name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 桶内复制 / 移动 / 重命名（任务化，规格 §6）：服务端 copy_object，不下载中转；
+/// 目录递归展开（含 0 字节占位对象）；冲突策略 overwrite / skip；>5GB 明确报错。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn start_copy(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    items: Vec<FsItem>,
+    target_prefix: String,
+    conflict: String,
+    new_name: Option<String>,
+    remove: bool,
+) -> Result<String, String> {
+    if let Some(name) = new_name.as_deref() {
+        if name.is_empty() || name.contains('/') {
+            return Err("新名称不能为空且不能包含 /".to_string());
+        }
+    }
+    if !target_prefix.is_empty() && !target_prefix.ends_with('/') {
+        return Err("目标前缀必须以 / 结尾（或为空表示桶根）".to_string());
+    }
+    // 传输客户端：目录展开 + copy 均可能涉及大量请求，不设 30s 超时
+    let (client, _) = state.current_client()?;
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(
+        &id,
+        TaskKind::Copy,
+        &bucket,
+        items.len(),
+        0,
+    ));
+    let retry = Arc::new(Mutex::new(None));
+    {
+        let mut inner = lock(&state.inner);
+        inner.tasks.insert(
+            id.clone(),
+            TaskEntry {
+                cancel: cancel.clone(),
+                shared: shared.clone(),
+                retry: retry.clone(),
+            },
+        );
+    }
+    tasks::spawn_copy(
+        app,
+        client,
+        bucket,
+        items,
+        target_prefix,
+        conflict,
+        new_name,
+        remove,
+        None,
+        cancel,
+        shared,
+        retry,
+        state.transfer_settings(),
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn list_multipart_uploads(
+    state: State<'_, App>,
+    bucket: String,
+) -> Result<Vec<easys3_core::object::MultipartUploadInfo>, String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::list_multipart_uploads(&client, &bucket)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn abort_multipart_uploads(
+    state: State<'_, App>,
+    bucket: String,
+    uploads: Vec<easys3_core::object::MultipartUploadInfo>,
+) -> Result<Vec<easys3_core::object::MultipartUploadInfo>, String> {
+    let (client, _) = state.current_control_client()?;
+    Ok(easys3_core::object::abort_multipart_uploads(&client, &bucket, &uploads).await)
+}
+
+#[tauri::command]
+pub async fn list_multipart_parts(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    upload_id: String,
+) -> Result<Vec<easys3_core::object::MultipartPartInfo>, String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::list_multipart_parts(&client, &bucket, &key, &upload_id)
         .await
         .map_err(|e| e.to_string())
 }
@@ -191,6 +443,7 @@ pub fn start_upload(
     bucket: String,
     prefix: String,
     paths: Vec<String>,
+    storage: Option<String>,
 ) -> Result<String, String> {
     let (client, _) = state.current_client()?;
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
@@ -224,7 +477,24 @@ pub fn start_upload(
             },
         );
     }
-    tasks::spawn_upload(app, client, bucket, files, cancel, shared);
+    let storage_class = storage
+        .as_deref()
+        .filter(|value| !value.is_empty() && *value != "STANDARD")
+        .map(|value| value.parse::<aws_sdk_s3::types::StorageClass>())
+        .transpose()
+        .map_err(|_| "不支持的存储类别".to_string())?;
+    let settings = state.transfer_settings();
+    tasks::spawn_upload(
+        app,
+        client,
+        bucket,
+        files,
+        cancel,
+        shared,
+        storage_class,
+        settings,
+        state.upload_throttle.clone(),
+    );
     Ok(id)
 }
 
@@ -273,6 +543,8 @@ pub fn start_download(
         cancel,
         shared,
         retry,
+        state.transfer_settings(),
+        state.download_throttle.clone(),
     );
     Ok(id)
 }
@@ -337,7 +609,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
     };
     {
         let gi = lock(&shared.info);
-        if gi.status == TaskStatus::Running {
+        if matches!(gi.status, TaskStatus::Running | TaskStatus::Queued) {
             return Err("任务仍在进行中".to_string());
         }
         if gi.failures.is_empty() {
@@ -376,6 +648,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 gi.bytes_done = 0;
                 gi.failures.clear();
                 gi.current_file = None;
+                gi.retry_count = 0;
             }
             {
                 let mut inner = lock(&state.inner);
@@ -389,7 +662,18 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                         });
                 }
             }
-            tasks::spawn_upload(app, client, bucket, subset, cancel, shared);
+            let settings = state.transfer_settings();
+            tasks::spawn_upload(
+                app,
+                client,
+                bucket,
+                subset,
+                cancel,
+                shared,
+                None,
+                settings,
+                state.upload_throttle.clone(),
+            );
         }
         Some(RetryJob::Download {
             client,
@@ -419,6 +703,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 gi.bytes_done = 0;
                 gi.failures.clear();
                 gi.current_file = None;
+                gi.retry_count = 0;
             }
             // 更新取消标志并取回重试槽；任务条目被并发清除时用一次性槽位，重试仍执行
             let retry_slot = {
@@ -443,6 +728,8 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 cancel,
                 shared,
                 retry_slot,
+                state.transfer_settings(),
+                state.download_throttle.clone(),
             );
         }
         Some(RetryJob::Delete {
@@ -470,6 +757,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 gi.bytes_done = 0;
                 gi.failures.clear();
                 gi.current_file = None;
+                gi.retry_count = 0;
             }
             // 更新取消标志并取回重试槽；任务条目被并发清除时用一次性槽位，重试仍执行
             let retry_slot = {
@@ -491,6 +779,64 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 cancel,
                 shared,
                 retry_slot,
+            );
+        }
+        Some(RetryJob::Copy {
+            client,
+            bucket,
+            items,
+            target_prefix,
+            new_name,
+            conflict,
+            remove,
+        }) => {
+            // 失败项命中的列表项：文件直接重试；文件夹（含展开失败的）重新展开后
+            // 仅重试其中失败 key（spawn 内过滤，已成功的不重复复制）
+            let subset: Vec<FsItem> = items
+                .into_iter()
+                .filter(|i| item_matches_failure(&i.key, i.is_dir, &failed))
+                .collect();
+            if subset.is_empty() {
+                return Err("没有可重试的失败项".to_string());
+            }
+            {
+                let mut gi = lock(&shared.info);
+                gi.status = TaskStatus::Running;
+                gi.files_total = subset.len();
+                gi.files_done = 0;
+                gi.files_failed = 0;
+                gi.files_skipped = 0;
+                gi.bytes_total = 0;
+                gi.bytes_done = 0;
+                gi.failures.clear();
+                gi.current_file = None;
+                gi.retry_count = 0;
+            }
+            // 更新取消标志并取回重试槽；任务条目被并发清除时用一次性槽位，重试仍执行
+            let retry_slot = {
+                let mut inner = lock(&state.inner);
+                match inner.tasks.get_mut(&task_id) {
+                    Some(entry) => {
+                        entry.cancel = cancel.clone();
+                        entry.retry.clone()
+                    }
+                    None => Arc::new(Mutex::new(None)),
+                }
+            };
+            tasks::spawn_copy(
+                app,
+                client,
+                bucket,
+                subset,
+                target_prefix,
+                conflict,
+                new_name,
+                remove,
+                Some(failed),
+                cancel,
+                shared,
+                retry_slot,
+                state.transfer_settings(),
             );
         }
         None => return Err("该任务不支持重试".to_string()),
@@ -519,9 +865,13 @@ pub fn get_tasks(state: State<App>) -> Vec<TaskInfo> {
 #[tauri::command]
 pub fn clear_finished_tasks(state: State<App>) -> Result<(), String> {
     let mut inner = lock(&state.inner);
-    // 锁毒化按“仍在运行”处理（保留条目），与项目防毒化约定一致，避免误清运行中任务
-    inner
-        .tasks
-        .retain(|_, e| lock(&e.shared.info).status == TaskStatus::Running);
+    // 锁毒化按“仍在运行”处理（保留条目），与项目防毒化约定一致，避免误清运行中任务；
+    // 排队中（Queued）的任务尚未开始，同样保留
+    inner.tasks.retain(|_, e| {
+        matches!(
+            lock(&e.shared.info).status,
+            TaskStatus::Running | TaskStatus::Queued
+        )
+    });
     Ok(())
 }

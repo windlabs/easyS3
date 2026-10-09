@@ -18,6 +18,8 @@ pub struct Entry {
     pub name: String,
     pub size: u64,
     pub last_modified: Option<String>,
+    /// S3 未显式返回 STANDARD 时前端按 STANDARD 展示。
+    pub storage_class: Option<String>,
     pub is_dir: bool,
 }
 
@@ -68,6 +70,7 @@ pub async fn list_objects(
                 name: name_of(p),
                 size: 0,
                 last_modified: None,
+                storage_class: None,
                 is_dir: true,
             })
         })
@@ -87,6 +90,7 @@ pub async fn list_objects(
                 name: name_of(key),
                 size: 0,
                 last_modified: o.last_modified().map(|d| d.to_string()),
+                storage_class: o.storage_class().map(|value| value.as_str().to_owned()),
                 is_dir: true,
             });
         } else {
@@ -95,6 +99,7 @@ pub async fn list_objects(
                 name: name_of(key),
                 size,
                 last_modified: o.last_modified().map(|d| d.to_string()),
+                storage_class: o.storage_class().map(|value| value.as_str().to_owned()),
                 is_dir: false,
             });
         }

@@ -9,8 +9,9 @@
 //! - 取消或失败必须 abort_multipart_upload 清理残片。
 
 use crate::error::{classify, CoreError};
+use crate::throttle::Throttle;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, StorageClass};
 use aws_sdk_s3::Client;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,14 +24,33 @@ pub const MULTIPART_THRESHOLD: u64 = 16 * 1024 * 1024;
 pub const PART_SIZE: u64 = 8 * 1024 * 1024;
 /// S3 单文件分片数上限
 pub const MAX_PARTS: u64 = 10_000;
+/// S3 分片下限（除最后一片外 ≥5MB）
+pub const MIN_PART_SIZE: u64 = 5 * 1024 * 1024;
 
 /// 进度回调：(已传字节, 总字节)，针对单个文件
 pub type ProgressFn = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
+/// 单次上传的可调参数（设置页可配，规格 §2）
+#[derive(Clone, Default)]
+pub struct UploadOptions {
+    /// 目标存储类别；None = STANDARD
+    pub storage_class: Option<StorageClass>,
+    /// multipart 分片大小（字节）；0 = 默认 8MB。低于 5MB 由设置层收敛。
+    pub part_size: u64,
+    /// 全局上传限速；None = 不限速
+    pub throttle: Option<Arc<Throttle>>,
+}
+
 /// 计算分片布局：分片大小与数量。
-/// part_size 至少 PART_SIZE，且保证分片数不超过 MAX_PARTS（每片除最后一片外 ≥5MB 的 S3 约束由 8MB 起步保证）。
-pub fn part_layout(size: u64) -> (u64, u64) {
-    let part_size = PART_SIZE.max(size.div_ceil(MAX_PARTS));
+/// part_size_cfg = 0 用默认值；非 0 时强制不低于 5MB（S3 硬性约束，规格 §2），
+/// 且始终保证分片数不超过 MAX_PARTS。
+pub fn part_layout(size: u64, part_size_cfg: u64) -> (u64, u64) {
+    let base = if part_size_cfg == 0 {
+        PART_SIZE
+    } else {
+        part_size_cfg.max(MIN_PART_SIZE)
+    };
+    let part_size = base.max(size.div_ceil(MAX_PARTS));
     let count = size.div_ceil(part_size);
     (part_size, count)
 }
@@ -43,6 +63,7 @@ pub async fn upload_file(
     path: &Path,
     progress: ProgressFn,
     cancel: Arc<AtomicBool>,
+    opts: UploadOptions,
 ) -> Result<(), CoreError> {
     let size = tokio::fs::metadata(path)
         .await
@@ -51,26 +72,34 @@ pub async fn upload_file(
 
     if size < MULTIPART_THRESHOLD {
         progress(0, size);
+        if let Some(throttle) = opts.throttle.as_ref() {
+            throttle.acquire(size).await;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(CoreError::Cancelled);
+            }
+        }
         // from_path 惰性流式读取；显式 content_length 避免 chunked 传输（部分兼容服务不支持）
         let body = ByteStream::from_path(path)
             .await
             .map_err(|e| CoreError::io(format!("打开文件失败 {}", path.display()), e))?;
-        client
+        let mut request = client
             .put_object()
             .bucket(bucket)
             .key(key)
             .body(body)
-            .content_length(size as i64)
-            .send()
-            .await
-            .map_err(|e| classify(&e))?;
+            .content_length(size as i64);
+        if let Some(class) = opts.storage_class {
+            request = request.storage_class(class);
+        }
+        request.send().await.map_err(|e| classify(&e))?;
         progress(size, size);
         Ok(())
     } else {
-        upload_multipart(client, bucket, key, path, size, progress, cancel).await
+        upload_multipart(client, bucket, key, path, size, progress, cancel, opts).await
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn upload_multipart(
     client: &Client,
     bucket: &str,
@@ -79,14 +108,13 @@ async fn upload_multipart(
     size: u64,
     progress: ProgressFn,
     cancel: Arc<AtomicBool>,
+    opts: UploadOptions,
 ) -> Result<(), CoreError> {
-    let mpu = client
-        .create_multipart_upload()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await
-        .map_err(|e| classify(&e))?;
+    let mut request = client.create_multipart_upload().bucket(bucket).key(key);
+    if let Some(ref class) = opts.storage_class {
+        request = request.storage_class(class.clone());
+    }
+    let mpu = request.send().await.map_err(|e| classify(&e))?;
     let target = PartTarget {
         client,
         bucket,
@@ -94,7 +122,7 @@ async fn upload_multipart(
         upload_id: mpu.upload_id().unwrap_or_default(),
     };
 
-    let result = upload_parts(&target, path, size, &progress, &cancel).await;
+    let result = upload_parts(&target, path, size, &progress, &cancel, &opts).await;
 
     match result {
         Ok(()) => Ok(()),
@@ -126,6 +154,7 @@ async fn upload_parts(
     size: u64,
     progress: &ProgressFn,
     cancel: &Arc<AtomicBool>,
+    opts: &UploadOptions,
 ) -> Result<(), CoreError> {
     let PartTarget {
         client,
@@ -133,7 +162,7 @@ async fn upload_parts(
         key,
         upload_id,
     } = *target;
-    let (part_size, part_count) = part_layout(size);
+    let (part_size, part_count) = part_layout(size, opts.part_size);
     let mut file = tokio::fs::File::open(path)
         .await
         .map_err(|e| CoreError::io(format!("打开文件失败 {}", path.display()), e))?;
@@ -150,6 +179,13 @@ async fn upload_parts(
         file.read_exact(&mut buf)
             .await
             .map_err(|e| CoreError::io(format!("读取文件失败 {}", path.display()), e))?;
+
+        if let Some(throttle) = opts.throttle.as_ref() {
+            throttle.acquire(this_len as u64).await;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(CoreError::Cancelled);
+            }
+        }
 
         let up = client
             .upload_part()
@@ -193,7 +229,7 @@ mod tests {
 
     #[test]
     fn part_layout_small_file_uses_default() {
-        let (ps, n) = part_layout(100 * 1024 * 1024);
+        let (ps, n) = part_layout(100 * 1024 * 1024, 0);
         assert_eq!(ps, PART_SIZE);
         assert_eq!(n, 13); // 100MB / 8MB = 12.5 → 13 片
     }
@@ -202,7 +238,7 @@ mod tests {
     fn part_layout_respects_max_parts() {
         // 100GB：100 * 2^30 / 8MB = 12800 片 > 10000 → 分片加大
         let size = 100u64 * 1024 * 1024 * 1024;
-        let (ps, n) = part_layout(size);
+        let (ps, n) = part_layout(size, 0);
         assert!(n <= MAX_PARTS, "分片数 {n} 必须不超过 {MAX_PARTS}");
         assert!(ps >= 5 * 1024 * 1024, "分片必须 ≥5MB");
         assert!(ps * n >= size, "分片总容量必须覆盖文件大小");
@@ -210,7 +246,20 @@ mod tests {
 
     #[test]
     fn part_layout_exact_multiple() {
-        let (ps, n) = part_layout(PART_SIZE * 3);
+        let (ps, n) = part_layout(PART_SIZE * 3, 0);
         assert_eq!((ps, n), (PART_SIZE, 3));
+    }
+
+    #[test]
+    fn part_layout_honors_configured_part_size() {
+        // 设置 16MB 分片：新任务按新值分片；仍保证 ≥5MB 与 ≤10000 片
+        let size = 100 * 1024 * 1024;
+        let (ps, n) = part_layout(size, 16 * 1024 * 1024);
+        assert_eq!(ps, 16 * 1024 * 1024);
+        assert_eq!(n, 7); // 100MB / 16MB = 6.25 → 7 片
+                          // 非法小值兜底：不低于 S3 的 5MB 分片下限
+        let (ps, n) = part_layout(size, 1);
+        assert_eq!(ps, MIN_PART_SIZE);
+        assert!(n <= MAX_PARTS);
     }
 }

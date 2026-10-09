@@ -2,6 +2,7 @@
 //! 规格：`.agents/s3-operations.md`「3. 下载」。
 
 use crate::error::{classify, CoreError};
+use crate::throttle::Throttle;
 use aws_sdk_s3::Client;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +12,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::upload::ProgressFn;
 
 /// 下载单个对象到 dest。自动创建父目录（文件夹下载保留目录结构）。
+/// throttle = 全局下载限速（None / rate 0 = 不限速）。
+#[allow(clippy::too_many_arguments)]
 pub async fn download_object(
     client: &Client,
     bucket: &str,
@@ -18,6 +21,7 @@ pub async fn download_object(
     dest: &Path,
     progress: ProgressFn,
     cancel: Arc<AtomicBool>,
+    throttle: Option<Arc<Throttle>>,
 ) -> Result<(), CoreError> {
     if let Some(dir) = dest.parent() {
         if !dir.as_os_str().is_empty() {
@@ -36,7 +40,15 @@ pub async fn download_object(
         .map_err(|e| classify(&e))?;
     let total = out.content_length().unwrap_or(0).max(0) as u64;
 
-    let result = stream_to_file(out.body.into_async_read(), dest, total, &progress, &cancel).await;
+    let result = stream_to_file(
+        out.body.into_async_read(),
+        dest,
+        total,
+        &progress,
+        &cancel,
+        throttle,
+    )
+    .await;
 
     if result.is_err() {
         // 取消或失败：删除未完成的分段文件（规格；不做断点续传）
@@ -45,12 +57,14 @@ pub async fn download_object(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stream_to_file<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
     dest: &Path,
     total: u64,
     progress: &ProgressFn,
     cancel: &Arc<AtomicBool>,
+    throttle: Option<Arc<Throttle>>,
 ) -> Result<(), CoreError> {
     let mut file = tokio::fs::File::create(dest)
         .await
@@ -67,6 +81,12 @@ async fn stream_to_file<R: tokio::io::AsyncRead + Unpin>(
             .map_err(|e| CoreError::io("下载数据读取失败", e))?;
         if n == 0 {
             break;
+        }
+        if let Some(throttle) = throttle.as_ref() {
+            throttle.acquire(n as u64).await;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(CoreError::Cancelled);
+            }
         }
         file.write_all(&buf[..n])
             .await

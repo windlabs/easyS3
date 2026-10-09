@@ -39,7 +39,43 @@ export const selection = reactive(new Set<string>());
 export const tasksStore = reactive({
   tasks: [] as TaskInfo[],
   open: false,
+  hovered: false,
 });
+
+// 全部任务成功结束后，任务中心自动收起的延时（毫秒）
+const TASKS_AUTO_CLOSE_MS = 5000;
+let tasksAutoCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearTasksAutoClose() {
+  if (tasksAutoCloseTimer !== null) {
+    clearTimeout(tasksAutoCloseTimer);
+    tasksAutoCloseTimer = null;
+  }
+}
+
+/**
+ * 自动收起判定：仅当「存在任务、全部终态、且没有任何失败项、鼠标未悬停」时启动计时。
+ * 有任务进行中或有失败项时不关闭（失败任务需保留重试入口）。
+ */
+function maybeScheduleTasksAutoClose() {
+  clearTasksAutoClose();
+  const tasks = tasksStore.tasks;
+  if (!tasks.length) return;
+  if (tasks.some((t) => t.status === "running" || t.status === "queued")) return;
+  if (tasks.some((t) => t.failures.length > 0)) return;
+  if (tasksStore.hovered) return;
+  tasksAutoCloseTimer = setTimeout(() => {
+    tasksAutoCloseTimer = null;
+    void clearFinished();
+  }, TASKS_AUTO_CLOSE_MS);
+}
+
+/** 鼠标悬停任务中心时暂停自动收起，移出后重新计时。 */
+export function setTasksHover(hovered: boolean) {
+  tasksStore.hovered = hovered;
+  if (hovered) clearTasksAutoClose();
+  else maybeScheduleTasksAutoClose();
+}
 
 // ---------- 轻提示 ----------
 
@@ -173,18 +209,27 @@ export async function refresh() {
 
 export async function initTasks() {
   tasksStore.tasks = await api.getTasks();
+  maybeScheduleTasksAutoClose();
   await listen<TaskInfo>("task-update", (ev) => {
     const t = ev.payload;
     const i = tasksStore.tasks.findIndex((x) => x.id === t.id);
+    const isNew = i < 0;
     if (i >= 0) tasksStore.tasks[i] = t;
     else tasksStore.tasks.push(t);
+    // 新任务开始（含排队中）：取消自动收起计时并展开浮窗
+    if (isNew && (t.status === "running" || t.status === "queued")) {
+      clearTasksAutoClose();
+      tasksStore.open = true;
+    }
     // 上传/删除任务结束后刷新当前列表（下载不影响服务端列表）
     if (
       t.status !== "running" &&
+      t.status !== "queued" &&
       (t.kind === "upload" || t.kind === "delete")
     ) {
       void refresh();
     }
+    maybeScheduleTasksAutoClose();
   });
 }
 
@@ -205,6 +250,9 @@ export async function retryTask(id: string) {
 }
 
 export async function clearFinished() {
+  clearTasksAutoClose();
   await api.clearFinishedTasks();
-  tasksStore.tasks = tasksStore.tasks.filter((t) => t.status === "running");
+  tasksStore.tasks = tasksStore.tasks.filter(
+    (t) => t.status === "running" || t.status === "queued",
+  );
 }

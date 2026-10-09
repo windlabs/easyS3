@@ -1,6 +1,6 @@
 {
   "name": "easys3",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "type": "module",
   "packageManager": "pnpm@12.6.0",
   "scripts": {

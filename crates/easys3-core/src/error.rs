@@ -71,6 +71,18 @@ impl CoreError {
             other => other.to_string(),
         }
     }
+
+    /// 仅 S3 层的瞬时错误可自动重试（连接失败 / 未分类服务端临时错误，如 5xx、SlowDown）。
+    /// 认证、权限、不存在不重试；取消、本地 IO、配置错误、其他业务错误也不重试
+    /// （重试无济于事，规格：403/404 直接计入失败）。
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            CoreError::S3 { kind, .. } => {
+                matches!(kind, ErrorKind::Connection | ErrorKind::Unknown)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// 将 aws-sdk 的 SdkError 按规格分类为面向用户的错误。
@@ -109,5 +121,25 @@ pub fn classify<E: ProvideErrorMetadata>(err: &SdkError<E>) -> CoreError {
             "无法连接到服务，请检查 endpoint 与网络",
             err.to_string(),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_transient_errors_are_auto_retryable() {
+        // 可自动重试：连接失败 / 未知服务端临时错误
+        assert!(CoreError::s3(ErrorKind::Connection, "a", "d").is_retryable());
+        assert!(CoreError::s3(ErrorKind::Unknown, "a", "d").is_retryable());
+        // 不自动重试：认证 / 权限 / 不存在 / 取消 / 本地错误（规格：403/404 直接计入失败）
+        assert!(!CoreError::s3(ErrorKind::Auth, "a", "d").is_retryable());
+        assert!(!CoreError::s3(ErrorKind::Permission, "a", "d").is_retryable());
+        assert!(!CoreError::s3(ErrorKind::NotFound, "a", "d").is_retryable());
+        assert!(!CoreError::Cancelled.is_retryable());
+        assert!(!CoreError::InvalidConfig("x".into()).is_retryable());
+        assert!(!CoreError::Io("x".into()).is_retryable());
+        assert!(!CoreError::Other("x".into()).is_retryable());
     }
 }

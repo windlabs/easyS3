@@ -8,6 +8,10 @@ import type {
   StateDto,
   TaskInfo,
   UploadPlan,
+  ObjectDetail,
+  MultipartUploadInfo,
+  MultipartPartInfo,
+  TransferSettings,
 } from "./types";
 
 // 命令参数一律使用与 Rust 参数名完全一致的键（均为单词，规避大小写转换问题）
@@ -28,11 +32,41 @@ export const countObjects = (bucket: string, prefix: string) =>
   invoke<number>("count_objects", { bucket, prefix });
 export const previewObject = (bucket: string, key: string) =>
   invoke<PreviewData>("preview_object", { bucket, key });
+export const isDownloadDirectory = (dest: string) =>
+  invoke<boolean>("is_download_directory", { dest });
+export const objectDetail = (bucket: string, key: string) =>
+  invoke<ObjectDetail>("object_detail", { bucket, key });
+export const createFolder = (bucket: string, prefix: string, name: string) =>
+  invoke<void>("create_folder", { bucket, prefix, name });
+export const startCopy = (
+  bucket: string,
+  items: FsItem[],
+  targetPrefix: string,
+  conflict: string,
+  newName: string | null,
+  remove: boolean,
+) =>
+  invoke<string>("start_copy", {
+    bucket,
+    items,
+    target_prefix: targetPrefix,
+    conflict,
+    new_name: newName,
+    remove,
+  });
+export const openObject = (bucket: string, key: string) =>
+  invoke<string>("open_object", { bucket, key });
+export const listMultipartUploads = (bucket: string) =>
+  invoke<MultipartUploadInfo[]>("list_multipart_uploads", { bucket });
+export const abortMultipartUploads = (bucket: string, uploads: MultipartUploadInfo[]) =>
+  invoke<MultipartUploadInfo[]>("abort_multipart_uploads", { bucket, uploads });
+export const listMultipartParts = (bucket: string, key: string, uploadId: string) =>
+  invoke<MultipartPartInfo[]>("list_multipart_parts", { bucket, key, upload_id: uploadId });
 
 export const planUpload = (paths: string[], prefix: string) =>
   invoke<UploadPlan>("plan_upload", { paths, prefix });
-export const startUpload = (bucket: string, prefix: string, paths: string[]) =>
-  invoke<string>("start_upload", { bucket, prefix, paths });
+export const startUpload = (bucket: string, prefix: string, paths: string[], storage: string | null) =>
+  invoke<string>("start_upload", { bucket, prefix, paths, storage });
 export const startDownload = (
   bucket: string,
   items: FsItem[],
@@ -46,3 +80,7 @@ export const cancelTask = (id: string) => invoke<void>("cancel_task", { id });
 export const retryTask = (id: string) => invoke<void>("retry_task", { id });
 export const getTasks = () => invoke<TaskInfo[]>("get_tasks");
 export const clearFinishedTasks = () => invoke<void>("clear_finished_tasks");
+
+export const getSettings = () => invoke<TransferSettings>("get_settings");
+export const saveTransferSettings = (settings: TransferSettings) =>
+  invoke<void>("save_transfer_settings", { settings });

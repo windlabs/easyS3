@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -22,6 +22,8 @@ import ConnectionDialog from "./components/ConnectionDialog.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import ConflictDialog from "./components/ConflictDialog.vue";
 import PreviewModal from "./components/PreviewModal.vue";
+import ObjectDetailModal from "./components/ObjectDetailModal.vue";
+import SettingsDialog from "./components/SettingsDialog.vue";
 import Toast from "./components/Toast.vue";
 
 // ---------- 连接对话框 ----------
@@ -32,6 +34,7 @@ const editingConnection = ref<ConnectionConfig | null>(null);
 const showUploadConfirm = ref(false);
 const uploadPlan = ref<UploadPlan | null>(null);
 const uploadPaths = ref<string[]>([]);
+const uploadStorageClass = ref("STANDARD");
 
 // ---------- 删除确认 ----------
 const showDeleteConfirm = ref(false);
@@ -47,15 +50,60 @@ const downloadDest = ref("");
 const showPreview = ref(false);
 const previewData = ref<PreviewData | null>(null);
 const previewName = ref("");
+const showObjectDetail = ref(false);
+const objectDetail = ref<import("./types").ObjectDetail | null>(null);
+const showSettings = ref(false);
+
+// 新建文件夹与历史 multipart 残片管理
+const newFolderName = ref("");
+const showFolderDialog = ref(false);
+const showMultipartDialog = ref(false);
+const multipartUploads = ref<import("./types").MultipartUploadInfo[]>([]);
+const selectedMultipart = ref(new Set<string>());
+const multipartParts = ref<import("./types").MultipartPartInfo[]>([]);
+const multipartPartsKey = ref("");
 
 // ---------- 拖拽上传 ----------
 const dragging = ref(false);
+
+// ---------- 本地界面偏好（不含连接或凭据） ----------
+type ThemeMode = "system" | "light" | "dark";
+const themeMode = ref<ThemeMode>((localStorage.getItem("easys3.theme") as ThemeMode) || "system");
+const rememberDownloadDir = ref(localStorage.getItem("easys3.remember-download-dir") !== "false");
+const lastDownloadDir = ref(localStorage.getItem("easys3.last-download-dir") || "");
+
+function applyTheme(mode = themeMode.value) {
+  const dark = mode === "dark" || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+}
+
+function setTheme(mode: ThemeMode) {
+  themeMode.value = mode;
+  localStorage.setItem("easys3.theme", mode);
+  applyTheme(mode);
+}
+
+function clearLastDownloadDir() {
+  lastDownloadDir.value = "";
+  localStorage.removeItem("easys3.last-download-dir");
+}
+
+async function changeDownloadDir() {
+  const dir = await openDialog({ directory: true, title: "选择默认下载目录" });
+  if (!dir) return;
+  lastDownloadDir.value = dir;
+  localStorage.setItem("easys3.last-download-dir", dir);
+}
+
+watch(rememberDownloadDir, (value) => localStorage.setItem("easys3.remember-download-dir", String(value)));
 
 // ---------- 退出保护（规格：仍有进行中任务时关窗需二次确认） ----------
 const showCloseConfirm = ref(false);
 
 function runningTaskCount(): number {
-  return store.tasksStore.tasks.filter((t) => t.status === "running").length;
+  return store.tasksStore.tasks.filter(
+    (t) => t.status === "running" || t.status === "queued",
+  ).length;
 }
 
 async function confirmQuit() {
@@ -72,6 +120,10 @@ function onFilterInput(e: Event) {
 }
 
 onMounted(async () => {
+  applyTheme();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (themeMode.value === "system") applyTheme();
+  });
   try {
     await store.refreshState();
     await store.initTasks();
@@ -157,8 +209,10 @@ async function confirmUpload() {
       store.browse.bucket,
       store.browse.prefix,
       uploadPaths.value,
+      uploadStorageClass.value,
     );
     store.tasksStore.open = true;
+    showUploadConfirm.value = false;
   } catch (e) {
     store.toast(errorMessage(e), "error");
   }
@@ -174,8 +228,18 @@ function selectionItems(): FsItem[] {
 
 async function requestDownload(items: FsItem[]) {
   if (!items.length) return;
-  const dir = await openDialog({ directory: true, title: "选择保存位置" });
+  const remembered = rememberDownloadDir.value ? lastDownloadDir.value : "";
+  const usableRemembered = remembered && await api.isDownloadDirectory(remembered);
+  if (remembered && !usableRemembered) {
+    clearLastDownloadDir();
+    store.toast("上次下载目录不存在，请重新选择", "error");
+  }
+  const dir = usableRemembered ? remembered : await openDialog({ directory: true, title: "选择保存位置" });
   if (!dir) return;
+  if (rememberDownloadDir.value) {
+    lastDownloadDir.value = dir;
+    localStorage.setItem("easys3.last-download-dir", dir);
+  }
   downloadItems.value = items;
   downloadDest.value = dir;
   showConflict.value = true;
@@ -197,6 +261,16 @@ async function confirmDownload(policy: ConflictPolicy) {
     store.tasksStore.open = true;
   } catch (e) {
     store.toast(errorMessage(e), "error");
+  }
+}
+
+async function changeDownloadDirForTask() {
+  const dir = await openDialog({ directory: true, title: "选择保存位置" });
+  if (!dir) return;
+  downloadDest.value = dir;
+  if (rememberDownloadDir.value) {
+    lastDownloadDir.value = dir;
+    localStorage.setItem("easys3.last-download-dir", dir);
   }
 }
 
@@ -231,6 +305,7 @@ async function confirmDelete() {
     await api.startDelete(store.browse.bucket, deleteItems.value);
     store.tasksStore.open = true;
     store.selection.clear();
+    showDeleteConfirm.value = false;
   } catch (e) {
     store.toast(errorMessage(e), "error");
   }
@@ -251,12 +326,158 @@ async function preview(entry: Entry) {
   }
 }
 
+async function detail(entry: Entry) {
+  try {
+    objectDetail.value = await api.objectDetail(store.browse.bucket, entry.key);
+    showObjectDetail.value = true;
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
+// ---------- 桶内复制 / 移动 / 重命名（任务化，进入任务中心） ----------
+
+const showCopyDialog = ref(false);
+const copyRemove = ref(false);
+/** null = 多选工具栏入口；Some(entry) = 行按钮单对象入口 */
+const copySingleEntry = ref<Entry | null>(null);
+const copyTargetPrefix = ref("");
+const copyNewName = ref("");
+const copyConflict = ref<"overwrite" | "skip">("overwrite");
+
+function openCopyDialog(entry: Entry | null, remove: boolean) {
+  const count = entry ? 1 : store.selection.size;
+  if (!entry && !count) return;
+  copySingleEntry.value = entry;
+  copyRemove.value = remove;
+  copyTargetPrefix.value = store.browse.prefix;
+  copyNewName.value = entry && !entry.is_dir ? entry.name : "";
+  copyConflict.value = "overwrite";
+  showCopyDialog.value = true;
+}
+
+const copyDialogLabel = computed(() => {
+  const op = copyRemove.value ? "移动" : "复制";
+  const entry = copySingleEntry.value;
+  if (!entry) return `${op} ${store.selection.size} 个对象`;
+  return entry.is_dir ? `${op}文件夹` : `${op} / 重命名`;
+});
+
+async function startCopyTask() {
+  const entry = copySingleEntry.value;
+  const items: FsItem[] = entry
+    ? [{ key: entry.key, is_dir: entry.is_dir }]
+    : selectionItems();
+  if (!items.length) return;
+  // 单文件：新名称必填（预填原名，改名即重命名，改前缀即移动）
+  let newName: string | null = null;
+  if (entry && !entry.is_dir) {
+    const name = copyNewName.value.trim();
+    if (!name) {
+      store.toast("新名称不能为空", "error");
+      return;
+    }
+    if (name.includes("/")) {
+      store.toast("新名称不能包含 /", "error");
+      return;
+    }
+    newName = name;
+  }
+  let prefix = copyTargetPrefix.value.trim();
+  if (prefix && !prefix.endsWith("/")) prefix += "/";
+  if (prefix === store.browse.prefix && !newName && !entry?.is_dir) {
+    store.toast("目标位置与当前位置相同", "error");
+    return;
+  }
+  try {
+    await api.startCopy(
+      store.browse.bucket,
+      items,
+      prefix,
+      copyConflict.value,
+      newName,
+      copyRemove.value,
+    );
+    showCopyDialog.value = false;
+    store.toast(
+      copyRemove.value ? "移动任务已开始，可在任务中心查看" : "复制任务已开始，可在任务中心查看",
+    );
+  } catch (e) {
+    store.toast(errorMessage(e), "error");
+  }
+}
+
+async function createFolder() {
+  const name = newFolderName.value.trim();
+  if (!name || name.includes("/")) {
+    store.toast("文件夹名称不能为空且不能包含 /", "error");
+    return;
+  }
+  if (store.browse.entries.some((entry) => entry.name === name)) {
+    store.toast("当前目录已存在同名条目", "error");
+    return;
+  }
+  try {
+    await api.createFolder(store.browse.bucket, store.browse.prefix, name);
+    showFolderDialog.value = false;
+    newFolderName.value = "";
+    await store.refresh();
+    store.toast("文件夹已创建");
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
+async function openMultipartDialog() {
+  try {
+    multipartUploads.value = await api.listMultipartUploads(store.browse.bucket);
+    selectedMultipart.value.clear();
+    showMultipartDialog.value = true;
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
+function multipartKey(upload: import("./types").MultipartUploadInfo) { return `${upload.key}\u0000${upload.upload_id}`; }
+
+async function abortSelectedMultipart() {
+  const uploads = multipartUploads.value.filter((upload) => selectedMultipart.value.has(multipartKey(upload)));
+  if (!uploads.length || !confirm(`将中止 ${uploads.length} 个未完成上传，操作不可恢复，是否继续？`)) return;
+  try {
+    // 返回清理失败的条目：成功项从列表移除，失败项保留供重试
+    const failed = await api.abortMultipartUploads(store.browse.bucket, uploads);
+    const failedKeys = new Set(failed.map((u) => multipartKey(u)));
+    multipartUploads.value = multipartUploads.value.filter(
+      (upload) => !selectedMultipart.value.has(multipartKey(upload)) || failedKeys.has(multipartKey(upload)),
+    );
+    selectedMultipart.value.clear();
+    // 分片明细面板可能已失效，一并重置
+    multipartParts.value = [];
+    multipartPartsKey.value = "";
+    if (failed.length) {
+      store.toast(`已清理 ${uploads.length - failed.length} 项，${failed.length} 项失败可重试`, "error");
+    } else {
+      store.toast(`已清理 ${uploads.length} 项未完成上传`);
+    }
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
+async function viewMultipartParts(upload: import("./types").MultipartUploadInfo) {
+  try {
+    multipartParts.value = await api.listMultipartParts(store.browse.bucket, upload.key, upload.upload_id);
+    multipartPartsKey.value = upload.key;
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
 async function copyKey(entry: Entry) {
   try {
     await writeText(entry.key);
     store.toast("已复制 Key");
   } catch {
     store.toast("复制失败", "error");
+  }
+}
+
+async function openFile(entry: Entry) {
+  try {
+    await api.openObject(store.browse.bucket, entry.key);
+    store.toast("已开始下载到临时目录，完成后将用默认程序打开");
+  } catch (e) {
+    store.toast(errorMessage(e), "error");
   }
 }
 </script>
@@ -292,6 +513,18 @@ async function copyKey(entry: Entry) {
           >
             复制
           </button>
+        </div>
+        <div class="preferences">
+          <label>主题
+            <select class="select" :value="themeMode" @change="setTheme(($event.target as HTMLSelectElement).value as ThemeMode)">
+              <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+            </select>
+          </label>
+          <label class="remember-dir"><input v-model="rememberDownloadDir" type="checkbox" />记住下载目录</label>
+          <span v-if="lastDownloadDir" class="dir-name" :title="lastDownloadDir">{{ lastDownloadDir }}</span>
+          <button class="btn sm ghost" @click="changeDownloadDir">{{ lastDownloadDir ? "更换目录" : "设置下载目录" }}</button>
+          <button v-if="lastDownloadDir" class="btn sm ghost" @click="clearLastDownloadDir">清除</button>
+          <button class="btn sm ghost" @click="showSettings = true">传输设置</button>
         </div>
       </div>
       <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
@@ -358,14 +591,22 @@ async function copyKey(entry: Entry) {
               :value="store.browse.filter"
               @input="onFilterInput"
             />
-            <button class="btn" @click="pickUpload(false)">上传文件</button>
-            <button class="btn" @click="pickUpload(true)">上传文件夹</button>
+             <button class="btn" @click="pickUpload(false)">上传文件</button>
+             <button class="btn" @click="pickUpload(true)">上传文件夹</button>
+             <button class="btn" @click="showFolderDialog = true">新建文件夹</button>
+             <button class="btn" @click="openMultipartDialog">碎片管理</button>
           </template>
           <span v-if="store.selection.size" class="selected-count">
             已选 {{ store.selection.size }} 项
           </span>
           <button class="btn" :disabled="!store.selection.size" @click="downloadSelection">
             下载
+          </button>
+          <button class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, false)">
+            复制
+          </button>
+          <button class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, true)">
+            移动
           </button>
           <button
             class="btn danger"
@@ -386,7 +627,10 @@ async function copyKey(entry: Entry) {
           :loading="store.browse.loading"
           :has-more="!!store.browse.nextToken"
           @open="store.openEntry"
-          @preview="preview"
+           @preview="preview"
+           @detail="detail"
+           @open-file="openFile"
+           @copy="openCopyDialog"
           @copy-key="copyKey"
           @download="(item) => requestDownload([item])"
           @del="(item) => requestDelete([item])"
@@ -417,6 +661,15 @@ async function copyKey(entry: Entry) {
         ，共 {{ formatBytes(uploadPlan.total_bytes) }}。
       </p>
       <p class="warn-text">注意：同名对象将被覆盖。</p>
+      <label class="upload-storage">存储类别
+        <select v-model="uploadStorageClass" class="select">
+          <option value="STANDARD">STANDARD</option>
+          <option value="STANDARD_IA">STANDARD_IA</option>
+          <option value="ONEZONE_IA">ONEZONE_IA</option>
+          <option value="GLACIER">GLACIER</option>
+          <option value="DEEP_ARCHIVE">DEEP_ARCHIVE</option>
+        </select>
+      </label>
     </ConfirmDialog>
 
     <ConfirmDialog
@@ -446,10 +699,70 @@ async function copyKey(entry: Entry) {
     <ConflictDialog
       v-model="showConflict"
       :count="downloadItems.length"
+      :dest="downloadDest"
+      @change-dest="changeDownloadDirForTask"
       @choose="confirmDownload"
     />
 
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
+    <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" />
+    <SettingsDialog v-model="showSettings" />
+
+    <div v-if="showFolderDialog" class="modal-mask">
+      <div class="modal small-modal">
+        <div class="modal-head">新建文件夹</div>
+        <div class="modal-body"><input v-model="newFolderName" class="input" placeholder="文件夹名称" @keyup.enter="createFolder" /></div>
+        <div class="modal-foot"><button class="btn" @click="showFolderDialog = false">取消</button><button class="btn primary" @click="createFolder">创建</button></div>
+      </div>
+    </div>
+
+    <div v-if="showCopyDialog" class="modal-mask">
+      <div class="modal small-modal">
+        <div class="modal-head">{{ copyDialogLabel }}</div>
+        <div class="modal-body copy-form">
+          <label class="copy-row">
+            <span class="copy-label">目标前缀</span>
+            <input v-model="copyTargetPrefix" class="input" :placeholder="store.browse.prefix || '桶根（空）'" @keyup.enter="startCopyTask" />
+          </label>
+          <p v-if="copySingleEntry?.is_dir" class="copy-hint">
+            将递归复制文件夹下所有层级（含目录占位对象）；修改前缀末段即重命名文件夹。
+          </p>
+          <label v-if="copySingleEntry && !copySingleEntry.is_dir" class="copy-row">
+            <span class="copy-label">新名称</span>
+            <input v-model="copyNewName" class="input" placeholder="保持原名称可不改" @keyup.enter="startCopyTask" />
+          </label>
+          <div class="copy-row">
+            <span class="copy-label">同名冲突</span>
+            <label class="copy-radio"><input v-model="copyConflict" type="radio" value="overwrite" />覆盖</label>
+            <label class="copy-radio"><input v-model="copyConflict" type="radio" value="skip" />跳过</label>
+          </div>
+          <p class="copy-hint">服务端复制，不经过本机中转；超过 5GB 的对象会明确提示不支持。任务可在任务中心取消与重试。</p>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" @click="showCopyDialog = false">取消</button>
+          <button class="btn primary" @click="startCopyTask">开始{{ copyRemove ? "移动" : "复制" }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showMultipartDialog" class="modal-mask">
+      <div class="modal multipart-modal">
+        <div class="modal-head">未完成上传（{{ multipartUploads.length }}）</div>
+        <div class="modal-body">
+          <div v-if="!multipartUploads.length" class="muted">当前桶没有未完成上传。</div>
+          <label v-for="upload in multipartUploads" :key="multipartKey(upload)" class="multipart-row">
+            <input v-model="selectedMultipart" type="checkbox" :value="multipartKey(upload)" />
+            <span class="break">{{ upload.key }}</span><span class="muted">{{ upload.initiated || "—" }}</span>
+            <button class="btn sm ghost" @click.prevent="viewMultipartParts(upload)">分片</button>
+          </label>
+          <div v-if="multipartPartsKey" class="parts-panel">
+            <b>{{ multipartPartsKey }}（{{ multipartParts.length }} 片）</b>
+            <div v-for="part in multipartParts" :key="part.part_number" class="muted">第 {{ part.part_number }} 片 · {{ formatBytes(part.size) }} · {{ part.last_modified || "—" }}</div>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn" @click="showMultipartDialog = false">关闭</button><button class="btn danger" :disabled="!selectedMultipart.size" @click="abortSelectedMultipart">中止所选</button></div>
+      </div>
+    </div>
 
     <Toast />
 
@@ -494,6 +807,11 @@ async function copyKey(entry: Entry) {
 .connection-actions .btn {
   flex: 1;
 }
+.preferences { padding-top: 10px; display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.preferences label { display: flex; align-items: center; gap: 6px; }
+.preferences .select { flex: 1; min-width: 0; }
+.remember-dir { cursor: pointer; }
+.dir-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bucket-list {
   border-top: 1px solid var(--border);
   padding: 12px;
@@ -582,4 +900,19 @@ async function copyKey(entry: Entry) {
   border-radius: 8px;
   font-size: 15px;
 }
+.small-modal { min-width: 360px; }
+.copy-form { display: grid; gap: 10px; }
+.copy-row { display: flex; align-items: center; gap: 10px; }
+.copy-label { flex: none; width: 64px; color: var(--muted); }
+.copy-radio { display: flex; align-items: center; gap: 4px; }
+.copy-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.copy-form { display: grid; gap: 10px; }
+.copy-row { display: flex; align-items: center; gap: 10px; }
+.copy-label { width: 64px; flex-shrink: 0; color: var(--muted); }
+.copy-radio { display: flex; align-items: center; gap: 4px; }
+.copy-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.multipart-modal { width: min(760px, 94vw); }
+.multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }
 </style>

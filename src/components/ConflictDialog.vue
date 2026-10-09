@@ -3,11 +3,12 @@ import { ref } from "vue";
 import type { ConflictPolicy } from "../types";
 import { useMaskClose } from "./useMaskClose";
 
-defineProps<{ modelValue: boolean; count: number }>();
+defineProps<{ modelValue: boolean; count: number; dest?: string }>();
 
 const emit = defineEmits<{
   "update:modelValue": [v: boolean];
   choose: [policy: ConflictPolicy];
+  "change-dest": [];
 }>();
 
 const { onMousedown, onClick } = useMaskClose(() =>
@@ -30,6 +31,7 @@ function setPolicy(p: ConflictPolicy) {
         <p class="muted">
           即将下载 <b>{{ count }}</b> 个条目。若本地已存在同名文件：
         </p>
+        <p v-if="dest" class="muted" :title="dest">保存到：{{ dest }}</p>
         <label class="radio-row">
           <input
             type="radio"
@@ -56,6 +58,7 @@ function setPolicy(p: ConflictPolicy) {
         </label>
       </div>
       <div class="modal-foot">
+        <button class="btn" @click="emit('change-dest')">更换目录</button>
         <button class="btn" @click="emit('update:modelValue', false)">取消</button>
         <button class="btn primary" @click="emit('choose', policy)">
           开始下载

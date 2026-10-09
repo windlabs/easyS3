@@ -2,6 +2,7 @@
 //! 业务逻辑全部在 easys3-core（可独立测试），本层只做 IPC 编排。
 
 mod commands;
+mod secrets;
 mod state;
 mod tasks;
 
@@ -9,6 +10,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             use tauri::Manager;
             let app_state = state::App::init(app.handle());
@@ -25,6 +27,13 @@ pub fn run() {
             commands::list_objects,
             commands::count_objects,
             commands::preview_object,
+            commands::is_download_directory,
+            commands::object_detail,
+            commands::create_folder,
+            commands::start_copy,
+            commands::list_multipart_uploads,
+            commands::abort_multipart_uploads,
+            commands::list_multipart_parts,
             commands::plan_upload,
             commands::start_upload,
             commands::start_download,
@@ -32,8 +41,17 @@ pub fn run() {
             commands::cancel_task,
             commands::retry_task,
             commands::get_tasks,
-            commands::clear_finished_tasks
+            commands::clear_finished_tasks,
+            commands::get_settings,
+            commands::save_transfer_settings,
+            commands::open_object
         ])
-        .run(tauri::generate_context!())
-        .expect("easyS3 运行失败");
+        .build(tauri::generate_context!())
+        .expect("easyS3 运行失败")
+        .run(|_app, event| {
+            // 退出时清理"打开"临时文件（P0-10）
+            if let tauri::RunEvent::Exit = event {
+                let _ = std::fs::remove_dir_all(state::open_temp_dir());
+            }
+        });
 }

@@ -180,7 +180,9 @@ const { onMousedown, onClick } = useMaskClose(close);
               {{ showSecret ? "隐藏" : "显示" }}
             </button>
           </div>
-          <div class="form-hint">凭据仅保存在本机配置文件中，不会上传。</div>
+          <div class="form-hint">
+            凭据优先保存在系统钥匙串；不可用时加密保存在本机。编辑时留空表示保留现有密钥。
+          </div>
         </div>
         <div class="form-row">
           <label class="check-label">
