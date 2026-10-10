@@ -17,6 +17,7 @@ import type {
   ObjectAclInfo,
   BucketVersioningInfo,
   SyncPlan,
+  UsageStats,
   ResumableTaskInfo,
 } from "./types";
 
@@ -44,6 +45,8 @@ export const listObjects = (bucket: string, prefix: string, token: string | null
   invoke<ListResult>("list_objects", { bucket, prefix, token });
 export const countObjects = (bucket: string, prefix: string) =>
   invoke<number>("count_objects", { bucket, prefix });
+export const prefixUsage = (bucket: string, prefix: string) => invoke<UsageStats>("prefix_usage", { bucket, prefix });
+export const startPrefixUsage = (bucket: string, prefix: string) => invoke<string>("start_prefix_usage", { bucket, prefix });
 export const planSyncUpload = (bucket: string, prefix: string, local: string, propagate: boolean) => invoke<SyncPlan>("plan_sync_upload", { bucket, prefix, local, propagate });
 export const planSyncDownload = (bucket: string, prefix: string, local: string, propagate: boolean) => invoke<SyncPlan>("plan_sync_download", { bucket, prefix, local, propagate });
 export const startSyncUpload = (bucket: string, plan: SyncPlan) => invoke<string[]>("start_sync_upload", { bucket, plan });

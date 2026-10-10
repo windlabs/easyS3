@@ -38,6 +38,48 @@ pub struct SearchEntry {
     pub storage_class: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageStats {
+    pub object_count: u64,
+    pub total_bytes: u64,
+}
+
+pub async fn count_prefix_usage(
+    client: &Client,
+    bucket: &str,
+    prefix: &str,
+    cancel: &Arc<AtomicBool>,
+) -> Result<UsageStats, CoreError> {
+    let mut stats = UsageStats {
+        object_count: 0,
+        total_bytes: 0,
+    };
+    let mut token = None;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CoreError::Cancelled);
+        }
+        let out = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .max_keys(PAGE_SIZE)
+            .set_continuation_token(token)
+            .send()
+            .await
+            .map_err(|e| classify(&e))?;
+        for object in out.contents() {
+            stats.object_count += 1;
+            stats.total_bytes += object.size().unwrap_or(0).max(0) as u64;
+        }
+        token = out.next_continuation_token().map(ToOwned::to_owned);
+        if token.is_none() {
+            break;
+        }
+    }
+    Ok(stats)
+}
+
 pub async fn list_buckets(client: &Client) -> Result<Vec<String>, CoreError> {
     let out = client
         .list_buckets()

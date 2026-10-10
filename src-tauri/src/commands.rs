@@ -744,6 +744,42 @@ pub async fn count_objects(
 }
 
 #[tauri::command]
+pub async fn prefix_usage(
+    state: State<'_, App>,
+    bucket: String,
+    prefix: String,
+) -> Result<easys3_core::list::UsageStats, String> {
+    let (client, _) = state.current_control_client()?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    easys3_core::list::count_prefix_usage(&client, &bucket, &prefix, &cancel)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn start_prefix_usage(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    prefix: String,
+) -> Result<String, String> {
+    let (client, _) = state.current_control_client()?;
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(&id, TaskKind::Stats, &bucket, 0, 0));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry: Arc::new(Mutex::new(None)),
+        },
+    );
+    tasks::spawn_usage_stats(app, client, id.clone(), bucket, prefix, cancel, shared);
+    Ok(id)
+}
+
+#[tauri::command]
 pub async fn plan_sync_upload(
     state: State<'_, App>,
     bucket: String,

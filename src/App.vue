@@ -16,6 +16,7 @@ import type {
   ConnectionConfig,
   UploadPlan,
   SyncPlan,
+  UsageStats,
   SearchEntry,
 } from "./types";
 import { errorMessage, formatBytes, uuid } from "./utils";
@@ -88,6 +89,9 @@ const presignMode = ref<"get" | "put">("get");
 const presignSeconds = ref(3600);
 const presignKey = ref("");
 const presignUrls = ref<string[]>([]);
+const showUsage = ref(false);
+const usageStats = ref<UsageStats | null>(null);
+const usageLoading = ref(false);
 const gridView = ref(localStorage.getItem("easys3.grid-view") === "true");
 function toggleGridView() { gridView.value = !gridView.value; localStorage.setItem("easys3.grid-view", String(gridView.value)); }
 const showCommandPalette = ref(false);
@@ -610,6 +614,8 @@ async function openFile(entry: Entry) {
     store.toast(errorMessage(e), "error");
   }
 }
+async function loadUsage() { usageLoading.value = true; usageStats.value = null; try { const id = await api.startPrefixUsage(store.browse.bucket, store.browse.prefix); store.tasksStore.open = true; const unlisten = await listen<{ id: string; object_count: number; total_bytes: number; error: string | null }>("usage-result", (event) => { if (event.payload.id !== id) return; if (event.payload.error) store.toast(event.payload.error, "error"); else usageStats.value = { object_count: event.payload.object_count, total_bytes: event.payload.total_bytes }; usageLoading.value = false; unlisten(); }); } catch (e) { store.toast(errorMessage(e), "error"); usageLoading.value = false; } }
+async function exportUsage() { if (!usageStats.value) return; const path = await (await import("@tauri-apps/plugin-dialog")).save({ title: "导出用量统计", defaultPath: "easys3-usage.json" }); if (!path) return; try { await api.exportPresignList(path, [JSON.stringify({ bucket: store.browse.bucket, prefix: store.browse.prefix, ...usageStats.value })]); store.toast("统计已导出"); } catch (e) { store.toast(errorMessage(e), "error"); } }
 
 async function openBrowserWindow() {
   try { await api.openBrowserWindow(); }
@@ -840,6 +846,7 @@ async function removeBucket() {
               <button class="btn" @click="openSync('download')">同步到本地</button>
               <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
               <button class="btn" @click="openMultipartDialog">碎片管理</button>
+              <button class="btn" @click="showUsage = true; loadUsage()">统计</button>
               <button class="btn" @click="openPresign('put')">生成上传链接</button>
           </template>
           <span v-if="store.selection.size" class="selected-count">
@@ -963,6 +970,7 @@ async function removeBucket() {
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
+    <div v-if="showUsage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶 / 前缀用量统计</div><div class="modal-body"><p class="warn-text">大桶统计会产生较多列表请求，可能耗时较长。</p><p v-if="usageLoading">正在递归扫描…</p><template v-else-if="usageStats"><p>对象数：<b>{{ usageStats.object_count }}</b></p><p>总大小：<b>{{ formatBytes(usageStats.total_bytes) }}</b></p></template></div><div class="modal-foot"><button class="btn" @click="showUsage = false">关闭</button><button class="btn" :disabled="usageLoading" @click="loadUsage">重新统计</button><button class="btn primary" :disabled="!usageStats" @click="exportUsage">导出 JSON</button></div></div></div>
     <div v-if="updateMessage" class="update-toast" @click="updateMessage = ''">{{ updateMessage }}</div>
     <div v-if="showCommandPalette" class="modal-mask"><div class="modal command-modal"><div class="modal-head">命令面板 <span class="muted">Ctrl/Cmd+K</span></div><div class="modal-body copy-form"><input v-model="commandQuery" class="input" autofocus placeholder="输入命令名称…" /><button v-for="command in commands" :key="command.label" class="command-row" @click="command.run(); showCommandPalette = false"><span>{{ command.label }}</span><kbd>{{ command.key }}</kbd></button><p class="copy-hint">快捷键：Ctrl/Cmd+R 刷新、Ctrl/Cmd+U 上传、Ctrl/Cmd+F 搜索、Ctrl/Cmd+K 命令面板。</p></div><div class="modal-foot"><button class="btn" @click="showCommandPalette = false">关闭</button></div></div></div>
     <div v-if="showConnectionTransfer" class="modal-mask"><div class="modal transfer-modal"><div class="modal-head">导入 / 导出连接</div><div class="modal-body copy-form"><section><b>导出</b><label><input v-model="includeExportSecrets" type="checkbox" /> 包含凭据（默认脱敏，需妥善保管）</label><input v-if="includeExportSecrets" v-model="connectionTransferPassword" class="input" type="password" placeholder="含凭据导出密码（必填）" /><button class="btn" @click="exportConnectionConfig">导出到文件…</button></section><section><b>导入配置文件</b><input v-model="connectionTransferPassword" class="input" type="password" placeholder="如导入文件加密，请输入密码" /><label><input v-model="importOverwrite" type="checkbox" /> 同名连接覆盖（否则跳过）</label><button class="btn" @click="importConnectionConfig">选择文件导入…</button></section><section><b>AWS CLI profile</b><button class="btn" @click="loadAwsProfiles">读取 ~/.aws/credentials</button><div v-if="awsProfiles.length" class="aws-profiles"><div v-for="profile in awsProfiles" :key="profile.id">{{ profile.name }} · {{ profile.region }}</div><button class="btn primary" @click="saveAwsProfiles">导入全部 profile</button></div></section></div><div class="modal-foot"><button class="btn primary" @click="showConnectionTransfer = false">关闭</button></div></div></div>

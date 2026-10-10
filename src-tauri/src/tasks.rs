@@ -38,6 +38,7 @@ pub enum TaskKind {
     Copy,
     Search,
     Zip,
+    Stats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -80,6 +81,14 @@ pub struct TaskInfo {
 pub struct SearchResultEvent {
     pub id: String,
     pub results: Vec<SearchEntry>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct UsageResultEvent {
+    pub id: String,
+    pub object_count: u64,
+    pub total_bytes: u64,
     pub error: Option<String>,
 }
 
@@ -209,6 +218,50 @@ pub fn spawn_search(
             }
             finish_task(&app, &cancel, &shared);
             let _ = app.emit("search-result", SearchResultEvent { id, results, error });
+        });
+    });
+}
+
+pub fn spawn_usage_stats(
+    app: tauri::AppHandle,
+    client: aws_sdk_s3::Client,
+    id: String,
+    bucket: String,
+    prefix: String,
+    cancel: Arc<AtomicBool>,
+    shared: Arc<TaskShared>,
+) {
+    let probe = shared.clone();
+    schedule(&probe, move || {
+        tauri::async_runtime::spawn(async move {
+            mark_running(&shared);
+            let result =
+                easys3_core::list::count_prefix_usage(&client, &bucket, &prefix, &cancel).await;
+            let (count, bytes, error) = match result {
+                Ok(stats) => {
+                    let mut info = lock(&shared.info);
+                    info.files_total = stats.object_count as usize;
+                    info.files_done = stats.object_count as usize;
+                    info.bytes_total = stats.total_bytes;
+                    info.bytes_done = stats.total_bytes;
+                    (stats.object_count, stats.total_bytes, None)
+                }
+                Err(CoreError::Cancelled) => (0, 0, None),
+                Err(error) => {
+                    record_failure(&shared, &prefix, error.to_string());
+                    (0, 0, Some(error.to_string()))
+                }
+            };
+            finish_task(&app, &cancel, &shared);
+            let _ = app.emit(
+                "usage-result",
+                UsageResultEvent {
+                    id,
+                    object_count: count,
+                    total_bytes: bytes,
+                    error,
+                },
+            );
         });
     });
 }

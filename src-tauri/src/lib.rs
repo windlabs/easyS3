@@ -64,6 +64,8 @@ pub fn run() {
             commands::set_bucket_versioning,
             commands::list_objects,
             commands::count_objects,
+            commands::prefix_usage,
+            commands::start_prefix_usage,
             commands::plan_sync_upload,
             commands::plan_sync_download,
             commands::start_search,
