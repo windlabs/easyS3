@@ -52,41 +52,57 @@ pub async fn list_object_versions(
     bucket: &str,
     key: &str,
 ) -> Result<Vec<ObjectVersionInfo>, CoreError> {
-    let out = client
-        .list_object_versions()
-        .bucket(bucket)
-        .prefix(key)
-        .send()
-        .await
-        .map_err(|e| classify(&e))?;
-    let mut result: Vec<_> = out
-        .versions()
-        .iter()
-        .filter(|version| version.key() == Some(key))
-        .filter_map(|version| {
-            Some(ObjectVersionInfo {
-                version_id: version.version_id()?.to_owned(),
-                size: version.size().unwrap_or(0).max(0) as u64,
-                last_modified: version.last_modified().map(ToString::to_string),
-                is_delete_marker: false,
-                is_latest: version.is_latest().unwrap_or(false),
-            })
-        })
-        .collect();
-    result.extend(
-        out.delete_markers()
-            .iter()
-            .filter(|marker| marker.key() == Some(key))
-            .filter_map(|marker| {
-                Some(ObjectVersionInfo {
-                    version_id: marker.version_id()?.to_owned(),
-                    size: 0,
-                    last_modified: marker.last_modified().map(ToString::to_string),
-                    is_delete_marker: true,
-                    is_latest: marker.is_latest().unwrap_or(false),
-                })
-            }),
-    );
+    let mut result = Vec::new();
+    let mut key_marker = None;
+    let mut version_id_marker = None;
+    loop {
+        let mut request = client.list_object_versions().bucket(bucket).prefix(key);
+        if let Some(marker) = key_marker.as_deref() {
+            request = request.key_marker(marker);
+        }
+        if let Some(marker) = version_id_marker.as_deref() {
+            request = request.version_id_marker(marker);
+        }
+        let out = request.send().await.map_err(|error| {
+            let classified = classify(&error);
+            CoreError::Other(format!(
+                "无法读取版本：桶可能未开启版本控制，或没有权限（{classified}）"
+            ))
+        })?;
+        result.extend(
+            out.versions()
+                .iter()
+                .filter(|version| version.key() == Some(key))
+                .filter_map(|version| {
+                    Some(ObjectVersionInfo {
+                        version_id: version.version_id()?.to_owned(),
+                        size: version.size().unwrap_or(0).max(0) as u64,
+                        last_modified: version.last_modified().map(ToString::to_string),
+                        is_delete_marker: false,
+                        is_latest: version.is_latest().unwrap_or(false),
+                    })
+                }),
+        );
+        result.extend(
+            out.delete_markers()
+                .iter()
+                .filter(|marker| marker.key() == Some(key))
+                .filter_map(|marker| {
+                    Some(ObjectVersionInfo {
+                        version_id: marker.version_id()?.to_owned(),
+                        size: 0,
+                        last_modified: marker.last_modified().map(ToString::to_string),
+                        is_delete_marker: true,
+                        is_latest: marker.is_latest().unwrap_or(false),
+                    })
+                }),
+        );
+        if !out.is_truncated().unwrap_or(false) {
+            break;
+        }
+        key_marker = out.next_key_marker().map(ToOwned::to_owned);
+        version_id_marker = out.next_version_id_marker().map(ToOwned::to_owned);
+    }
     result.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     Ok(result)
 }

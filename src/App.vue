@@ -760,7 +760,7 @@ async function openFile(entry: Entry) {
     />
 
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
-    <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" />
+    <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
 
     <div v-if="showPresign" class="modal-mask">

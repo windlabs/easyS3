@@ -1,11 +1,35 @@
 <script setup lang="ts">
-import type { ObjectDetail } from "../types";
+import { ref, watch } from "vue";
+import * as api from "../api";
+import type { ObjectDetail, ObjectVersionInfo } from "../types";
 import { formatBytes, formatTime } from "../utils";
 import { useMaskClose } from "./useMaskClose";
 
-const props = defineProps<{ modelValue: boolean; detail: ObjectDetail | null }>();
 const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
 const { onMousedown, onClick } = useMaskClose(() => emit("update:modelValue", false));
+const props = defineProps<{ modelValue: boolean; detail: ObjectDetail | null; bucket: string }>();
+const versions = ref<ObjectVersionInfo[]>([]);
+const versionsLoading = ref(false);
+const versionsError = ref("");
+
+watch(() => [props.modelValue, props.detail?.key] as const, ([open]) => {
+  if (!open) { versions.value = []; versionsError.value = ""; }
+});
+
+async function loadVersions() {
+  if (!props.detail) return;
+  versionsLoading.value = true; versionsError.value = "";
+  try { versions.value = await api.objectVersions(props.bucket, props.detail.key); }
+  catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); }
+  finally { versionsLoading.value = false; }
+}
+
+async function restore(version: ObjectVersionInfo) {
+  if (!props.detail || version.is_delete_marker) return;
+  if (!confirm(`将恢复此历史版本为当前对象，是否继续？`)) return;
+  try { await api.restoreObjectVersion(props.bucket, props.detail.key, version.version_id); await loadVersions(); }
+  catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); }
+}
 </script>
 
 <template>
@@ -27,6 +51,16 @@ const { onMousedown, onClick } = useMaskClose(() => emit("update:modelValue", fa
             <dt>{{ item.key }}</dt><dd class="break">{{ item.value }}</dd>
           </template>
         </dl>
+        <div class="meta-title version-head"><span>版本</span><button class="btn sm" :disabled="versionsLoading" @click="loadVersions">{{ versionsLoading ? "加载中…" : "查看版本" }}</button></div>
+        <div v-if="versionsError" class="version-error">{{ versionsError }}</div>
+        <div v-if="versions.length" class="versions">
+          <div v-for="version in versions" :key="version.version_id" class="version-row">
+            <span>{{ version.is_delete_marker ? "删除标记" : formatBytes(version.size) }}</span>
+            <span>{{ formatTime(version.last_modified) }}</span>
+            <span :title="version.version_id">{{ version.is_latest ? "当前版本" : version.version_id }}</span>
+            <button v-if="!version.is_delete_marker && !version.is_latest" class="btn sm" @click="restore(version)">恢复</button>
+          </div>
+        </div>
       </div>
       <div class="modal-foot"><button class="btn primary" @click="emit('update:modelValue', false)">关闭</button></div>
     </div>
@@ -38,4 +72,9 @@ const { onMousedown, onClick } = useMaskClose(() => emit("update:modelValue", fa
 dl { display: grid; grid-template-columns: 120px 1fr; margin: 0; gap: 8px 12px; }
 dt { color: var(--muted); } dd { margin: 0; } .break { word-break: break-all; }
 .meta-title { margin: 18px 0 10px; font-weight: 600; }
+.version-head { display: flex; align-items: center; justify-content: space-between; }
+.versions { border-top: 1px solid var(--border); }
+.version-row { display: grid; grid-template-columns: 90px 1fr minmax(100px, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.version-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.version-error { color: var(--danger); font-size: 12px; }
 </style>
