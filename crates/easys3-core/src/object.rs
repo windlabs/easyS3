@@ -47,6 +47,109 @@ pub struct ObjectVersionInfo {
     pub is_latest: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectTag {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ObjectAclInfo {
+    pub owner: Option<String>,
+    pub grants: Vec<String>,
+}
+
+pub async fn get_object_tags(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<Vec<ObjectTag>, CoreError> {
+    let out = client
+        .get_object_tagging()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(out
+        .tag_set()
+        .iter()
+        .map(|tag| ObjectTag {
+            key: tag.key().to_owned(),
+            value: tag.value().to_owned(),
+        })
+        .collect())
+}
+
+pub async fn put_object_tags(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    tags: &[ObjectTag],
+) -> Result<(), CoreError> {
+    if tags.iter().any(|tag| tag.key.trim().is_empty()) {
+        return Err(CoreError::Other("标签名称不能为空".into()));
+    }
+    let tag_set = aws_sdk_s3::types::Tagging::builder()
+        .set_tag_set(Some(
+            tags.iter()
+                .map(|tag| {
+                    aws_sdk_s3::types::Tag::builder()
+                        .key(&tag.key)
+                        .value(&tag.value)
+                        .build()
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| CoreError::Other(format!("标签格式无效：{error}")))?,
+        ))
+        .build()
+        .map_err(|error| CoreError::Other(format!("标签格式无效：{error}")))?;
+    client
+        .put_object_tagging()
+        .bucket(bucket)
+        .key(key)
+        .tagging(tag_set)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
+pub async fn get_object_acl(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<ObjectAclInfo, CoreError> {
+    let out = client
+        .get_object_acl()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    let grants = out
+        .grants()
+        .iter()
+        .map(|grant| {
+            format!(
+                "{}：{}",
+                grant
+                    .grantee()
+                    .and_then(|g| g.display_name().or(g.uri()).or(g.id()))
+                    .unwrap_or("未知主体"),
+                grant.permission().map(|p| p.as_str()).unwrap_or("未知权限")
+            )
+        })
+        .collect();
+    Ok(ObjectAclInfo {
+        owner: out
+            .owner()
+            .and_then(|owner| owner.display_name().or(owner.id()))
+            .map(ToOwned::to_owned),
+        grants,
+    })
+}
+
 pub async fn list_object_versions(
     client: &Client,
     bucket: &str,

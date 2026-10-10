@@ -13,6 +13,8 @@ import type {
   MultipartPartInfo,
   TransferSettings,
   ObjectVersionInfo,
+  ObjectTag,
+  ObjectAclInfo,
   ResumableTaskInfo,
 } from "./types";
 
@@ -46,6 +48,9 @@ export const objectDetail = (bucket: string, key: string) =>
   invoke<ObjectDetail>("object_detail", { bucket, key });
 export const objectVersions = (bucket: string, key: string) => invoke<ObjectVersionInfo[]>("object_versions", { bucket, key });
 export const restoreObjectVersion = (bucket: string, key: string, version: string) => invoke<void>("restore_object_version", { bucket, key, version });
+export const objectTags = (bucket: string, key: string) => invoke<ObjectTag[]>("object_tags", { bucket, key });
+export const saveObjectTags = (bucket: string, key: string, tags: ObjectTag[]) => invoke<void>("save_object_tags", { bucket, key, tags });
+export const objectAcl = (bucket: string, key: string) => invoke<ObjectAclInfo>("object_acl", { bucket, key });
 export const createFolder = (bucket: string, prefix: string, name: string) =>
   invoke<void>("create_folder", { bucket, prefix, name });
 export const startCopy = (

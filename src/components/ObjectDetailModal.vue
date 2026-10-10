@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import * as api from "../api";
-import type { ObjectDetail, ObjectVersionInfo } from "../types";
+import type { ObjectAclInfo, ObjectDetail, ObjectTag, ObjectVersionInfo } from "../types";
 import { formatBytes, formatTime } from "../utils";
 import { useMaskClose } from "./useMaskClose";
 
@@ -11,6 +11,10 @@ const props = defineProps<{ modelValue: boolean; detail: ObjectDetail | null; bu
 const versions = ref<ObjectVersionInfo[]>([]);
 const versionsLoading = ref(false);
 const versionsError = ref("");
+const tags = ref<ObjectTag[]>([]);
+const acl = ref<ObjectAclInfo | null>(null);
+const accessError = ref("");
+const accessLoaded = ref(false);
 
 watch(() => [props.modelValue, props.detail?.key] as const, ([open]) => {
   if (!open) { versions.value = []; versionsError.value = ""; }
@@ -29,6 +33,22 @@ async function restore(version: ObjectVersionInfo) {
   if (!confirm(`将恢复此历史版本为当前对象，是否继续？`)) return;
   try { await api.restoreObjectVersion(props.bucket, props.detail.key, version.version_id); await loadVersions(); }
   catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); }
+}
+
+async function loadAccess() {
+  if (!props.detail) return;
+  accessError.value = ""; accessLoaded.value = true;
+  try { tags.value = await api.objectTags(props.bucket, props.detail.key); }
+  catch (e) { accessError.value = `标签：${e instanceof Error ? e.message : String(e)}`; }
+  try { acl.value = await api.objectAcl(props.bucket, props.detail.key); }
+  catch (e) { accessError.value += `${accessError.value ? "；" : ""}ACL：${e instanceof Error ? e.message : String(e)}`; }
+}
+function addTag() { tags.value.push({ key: "", value: "" }); }
+function removeTag(index: number) { tags.value.splice(index, 1); }
+async function saveTags() {
+  if (!props.detail) return;
+  try { await api.saveObjectTags(props.bucket, props.detail.key, tags.value); await loadAccess(); }
+  catch (e) { accessError.value = e instanceof Error ? e.message : String(e); }
 }
 </script>
 
@@ -61,6 +81,13 @@ async function restore(version: ObjectVersionInfo) {
             <button v-if="!version.is_delete_marker && !version.is_latest" class="btn sm" @click="restore(version)">恢复</button>
           </div>
         </div>
+        <div class="meta-title version-head"><span>标签与访问控制</span><button class="btn sm" @click="loadAccess">查看</button></div>
+        <div v-if="accessError" class="version-error">{{ accessError }}</div>
+        <div v-if="accessLoaded" class="access-panel">
+          <div v-for="(tag, index) in tags" :key="index" class="tag-row"><input v-model="tag.key" class="input" placeholder="标签名" /><input v-model="tag.value" class="input" placeholder="标签值" /><button class="btn sm" @click="removeTag(index)">删除</button></div>
+          <div class="tag-actions"><button class="btn sm" @click="addTag">新增标签</button><button class="btn sm primary" @click="saveTags">保存标签</button></div>
+          <div v-if="acl" class="acl"><b>ACL（只读）</b><div>所有者：{{ acl.owner || "—" }}</div><div v-for="grant in acl.grants" :key="grant">{{ grant }}</div></div>
+        </div>
       </div>
       <div class="modal-foot"><button class="btn primary" @click="emit('update:modelValue', false)">关闭</button></div>
     </div>
@@ -77,4 +104,8 @@ dt { color: var(--muted); } dd { margin: 0; } .break { word-break: break-all; }
 .version-row { display: grid; grid-template-columns: 90px 1fr minmax(100px, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 .version-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .version-error { color: var(--danger); font-size: 12px; }
+.access-panel { display: grid; gap: 7px; }
+.tag-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; }
+.tag-actions { display: flex; gap: 6px; }
+.acl { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; display: grid; gap: 4px; }
 </style>

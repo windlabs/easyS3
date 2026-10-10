@@ -644,6 +644,41 @@ pub async fn object_versions(
 }
 
 #[tauri::command]
+pub async fn object_tags(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+) -> Result<Vec<easys3_core::object::ObjectTag>, String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::get_object_tags(&client, &bucket, &key)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn save_object_tags(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    tags: Vec<easys3_core::object::ObjectTag>,
+) -> Result<(), String> {
+    let (client, _) = state.current_client()?;
+    easys3_core::object::put_object_tags(&client, &bucket, &key, &tags)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn object_acl(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+) -> Result<easys3_core::object::ObjectAclInfo, String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::get_object_acl(&client, &bucket, &key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn restore_object_version(
     state: State<'_, App>,
     bucket: String,

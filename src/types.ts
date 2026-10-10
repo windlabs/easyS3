@@ -52,6 +52,8 @@ export interface ObjectDetail {
 export interface ObjectVersionInfo {
   version_id: string; size: number; last_modified: string | null; is_delete_marker: boolean; is_latest: boolean;
 }
+export interface ObjectTag { key: string; value: string; }
+export interface ObjectAclInfo { owner: string | null; grants: string[]; }
 
 export interface MultipartUploadInfo {
   key: string;
