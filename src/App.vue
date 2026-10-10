@@ -40,6 +40,7 @@ const uploadPlan = ref<UploadPlan | null>(null);
 const uploadPaths = ref<string[]>([]);
 const uploadStorageClass = ref("STANDARD");
 const uploadChangesOnly = ref(false);
+const uploadVerifyAfter = ref(false);
 
 // ---------- 删除确认 ----------
 const showDeleteConfirm = ref(false);
@@ -245,9 +246,9 @@ async function confirmUpload() {
   if (!uploadPaths.value.length) return;
   try {
     if (uploadChangesOnly.value && uploadPlan.value) {
-      await api.startUploadPlan(store.browse.bucket, uploadPlan.value, uploadStorageClass.value);
+      await api.startUploadPlan(store.browse.bucket, uploadPlan.value, uploadStorageClass.value, uploadVerifyAfter.value);
     } else {
-      await api.startUpload(store.browse.bucket, store.browse.prefix, uploadPaths.value, uploadStorageClass.value);
+      await api.startUpload(store.browse.bucket, store.browse.prefix, uploadPaths.value, uploadStorageClass.value, uploadVerifyAfter.value);
     }
     store.tasksStore.open = true;
     showUploadConfirm.value = false;
@@ -870,6 +871,7 @@ async function removeBucket() {
        <p v-if="uploadPlan?.skipped">将跳过 {{ uploadPlan.skipped }} 个大小未变化的文件。</p>
        <p class="warn-text">注意：同名对象将被覆盖。</p>
        <label class="upload-storage"><input v-model="uploadChangesOnly" type="checkbox" @change="refreshUploadPlan" /> 仅上传新增 / 变更文件</label>
+       <label class="upload-storage"><input v-model="uploadVerifyAfter" type="checkbox" /> 上传后回读 ETag 校验（分片文件自动跳过）</label>
       <label class="upload-storage">存储类别
         <select v-model="uploadStorageClass" class="select">
           <option value="STANDARD">STANDARD</option>

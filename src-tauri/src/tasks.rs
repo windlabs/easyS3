@@ -635,6 +635,7 @@ pub fn spawn_upload(
     storage_class: Option<aws_sdk_s3::types::StorageClass>,
     settings: TransferSettings,
     throttle: Arc<Throttle>,
+    verify_after_upload: bool,
     checkpoints: Option<CheckpointSink>,
     resume_checkpoints: Option<Arc<HashMap<String, MultipartCheckpoint>>>,
     completed: Option<CompletionSink>,
@@ -657,6 +658,7 @@ pub fn spawn_upload(
                     storage_class: storage_class.clone(),
                     part_size: settings.part_size_bytes(),
                     throttle: Some(throttle.clone()),
+                    verify_after_upload,
                 };
                 // 瞬时错误自动重试次数（设置页可配，默认 3；0 = 关闭）
                 let auto_retries = settings.auto_retry_count as usize;
@@ -920,7 +922,12 @@ async fn run_download_jobs(
         }
         match result {
             Ok(()) => {
-                lock(&shared.info).files_done += 1;
+                match easys3_core::download::verify_download_etag(client, bucket, &job.key, &dest)
+                    .await
+                {
+                    Ok(()) => lock(&shared.info).files_done += 1,
+                    Err(error) => record_failure(shared, &job.key, error.to_string()),
+                }
             }
             Err(CoreError::Cancelled) => break,
             Err(e) => record_failure(shared, &job.key, e.to_string()),

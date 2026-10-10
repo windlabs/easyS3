@@ -138,6 +138,10 @@
 
 - 上传确认框可选仅上传新增/变更；按远端同 key 大小比较，大小相同跳过并显示数量。目录内空文件夹写入零字节占位对象，确认框和任务中心一致展示数量。
 
+## P1-12 完整性校验（2026-10）
+
+- 下载完成自动校验单部件对象 ETag/MD5；不一致时明确报错并保留文件现场。分片复合 ETag 不做错误的整体 MD5 比对，明确跳过。
+
 ## 分发与平台
 
 - 目标平台：**Windows、Linux、macOS 三端**（Windows NSIS、Linux AppImage + deb、macOS dmg，覆盖 Intel 与 Apple Silicon）。

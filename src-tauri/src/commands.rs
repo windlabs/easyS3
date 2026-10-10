@@ -428,6 +428,7 @@ pub fn resume_task(state: State<App>, app: tauri::AppHandle, id: String) -> Resu
                 storage_class,
                 state.transfer_settings(),
                 state.upload_throttle.clone(),
+                false,
                 Some(changed),
                 Some(checkpoints),
                 Some(completed),
@@ -867,6 +868,7 @@ pub fn start_sync_upload(
         None,
         state.transfer_settings(),
         state.upload_throttle.clone(),
+        false,
         None,
         None,
         None,
@@ -1450,6 +1452,7 @@ pub fn start_upload(
     prefix: String,
     paths: Vec<String>,
     storage: Option<String>,
+    verify: bool,
 ) -> Result<String, String> {
     require_writable(&state)?;
     let connection = state.current_connection()?;
@@ -1555,6 +1558,7 @@ pub fn start_upload(
         storage_class,
         settings,
         state.upload_throttle.clone(),
+        verify,
         Some(checkpoints),
         None,
         Some(completed),
@@ -1569,6 +1573,7 @@ pub async fn start_upload_plan(
     bucket: String,
     plan: UploadPlan,
     storage: Option<String>,
+    verify: bool,
 ) -> Result<String, String> {
     require_writable(&state)?;
     let files: Vec<_> = plan
@@ -1629,6 +1634,7 @@ pub async fn start_upload_plan(
         class,
         state.transfer_settings(),
         state.upload_throttle.clone(),
+        verify,
         None,
         None,
         None,
@@ -1841,6 +1847,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 None,
                 settings,
                 state.upload_throttle.clone(),
+                false,
                 None,
                 None,
                 None,

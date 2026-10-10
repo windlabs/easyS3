@@ -39,6 +39,8 @@ pub struct UploadOptions {
     pub part_size: u64,
     /// 全局上传限速；None = 不限速
     pub throttle: Option<Arc<Throttle>>,
+    /// 上传完成后 HeadObject 回读 ETag；multipart 复合 ETag 不做 MD5 比较。
+    pub verify_after_upload: bool,
 }
 
 /// multipart 上传的可持久化检查点。调用方负责将它写入应用配置目录。
@@ -122,6 +124,9 @@ pub async fn upload_file_resumable(
             request = request.storage_class(class);
         }
         request.send().await.map_err(|e| classify(&e))?;
+        if opts.verify_after_upload {
+            verify_uploaded_etag(client, bucket, key, path, size).await?;
+        }
         progress(size, size);
         Ok(())
     } else {
@@ -139,6 +144,51 @@ pub async fn upload_file_resumable(
         )
         .await
     }
+}
+
+async fn verify_uploaded_etag(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    path: &Path,
+    size: u64,
+) -> Result<(), CoreError> {
+    let head = client
+        .head_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    let Some(etag) = head.e_tag().map(|value| value.trim_matches('"')) else {
+        return Ok(());
+    };
+    if etag.contains('-') || etag.len() != 32 {
+        return Ok(());
+    }
+    use md5::{Digest, Md5};
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| CoreError::io(format!("打开校验文件失败 {}", path.display()), e))?;
+    let mut hasher = Md5::new();
+    let mut buffer = [0u8; 256 * 1024];
+    let mut read_total = 0;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| CoreError::io("读取校验文件失败", e))?;
+        if read == 0 {
+            break;
+        }
+        read_total += read as u64;
+        hasher.update(&buffer[..read]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if read_total != size || actual != etag.to_ascii_lowercase() {
+        return Err(CoreError::Other("上传后完整性校验失败：ETag 不一致".into()));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -4,6 +4,7 @@
 use crate::error::{classify, CoreError};
 use crate::throttle::Throttle;
 use aws_sdk_s3::Client;
+use md5::{Digest, Md5};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -30,6 +31,50 @@ pub async fn download_object(
         let _ = tokio::fs::remove_file(partial_path(dest)).await;
     }
     result
+}
+
+/// 下载后 ETag 校验：仅单部件 ETag（32 位 MD5）可靠；multipart 复合 ETag 明确跳过。
+pub async fn verify_download_etag(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    dest: &Path,
+) -> Result<(), CoreError> {
+    let head = client
+        .head_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    let Some(etag) = head.e_tag().map(|value| value.trim_matches('"')) else {
+        return Ok(());
+    };
+    if etag.contains('-') || etag.len() != 32 {
+        return Ok(());
+    }
+    let mut file = tokio::fs::File::open(dest)
+        .await
+        .map_err(|e| CoreError::io(format!("打开校验文件失败 {}", dest.display()), e))?;
+    let mut hasher = Md5::new();
+    let mut buffer = [0u8; 256 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| CoreError::io("读取校验文件失败", e))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != etag.to_ascii_lowercase() {
+        return Err(CoreError::Other(format!(
+            "完整性校验失败：ETag 不一致（期望 {etag}，实际 {actual}），已保留文件现场"
+        )));
+    }
+    Ok(())
 }
 
 /// 将内容先写入同目录 `.part` 文件。恢复模式下，若存在该文件，使用 Range 从
