@@ -125,6 +125,101 @@ pub async fn delete_bucket(client: &Client, bucket: &str) -> Result<(), CoreErro
     Ok(())
 }
 
+pub async fn get_bucket_policy(client: &Client, bucket: &str) -> Result<String, CoreError> {
+    let out = client
+        .get_bucket_policy()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(out.policy().unwrap_or_default().to_string())
+}
+
+pub async fn put_bucket_policy(
+    client: &Client,
+    bucket: &str,
+    policy: &str,
+) -> Result<(), CoreError> {
+    serde_json::from_str::<serde_json::Value>(policy)
+        .map_err(|_| CoreError::Other("Bucket Policy 必须是有效 JSON".into()))?;
+    client
+        .put_bucket_policy()
+        .bucket(bucket)
+        .policy(policy)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorsRuleDto {
+    pub id: Option<String>,
+    pub allowed_origins: Vec<String>,
+    pub allowed_methods: Vec<String>,
+    pub allowed_headers: Vec<String>,
+    pub expose_headers: Vec<String>,
+    pub max_age_seconds: Option<i32>,
+}
+
+pub async fn get_bucket_cors(client: &Client, bucket: &str) -> Result<Vec<CorsRuleDto>, CoreError> {
+    let out = client
+        .get_bucket_cors()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(out
+        .cors_rules()
+        .iter()
+        .map(|rule| CorsRuleDto {
+            id: rule.id().map(ToOwned::to_owned),
+            allowed_origins: rule.allowed_origins().to_vec(),
+            allowed_methods: rule.allowed_methods().to_vec(),
+            allowed_headers: rule.allowed_headers().to_vec(),
+            expose_headers: rule.expose_headers().to_vec(),
+            max_age_seconds: rule.max_age_seconds(),
+        })
+        .collect())
+}
+pub async fn put_bucket_cors(
+    client: &Client,
+    bucket: &str,
+    rules: Vec<CorsRuleDto>,
+) -> Result<(), CoreError> {
+    let mut built = Vec::new();
+    for rule in rules {
+        if rule.allowed_origins.is_empty() || rule.allowed_methods.is_empty() {
+            return Err(CoreError::Other(
+                "每条 CORS 规则必须包含允许来源和方法".into(),
+            ));
+        }
+        built.push(
+            aws_sdk_s3::types::CorsRule::builder()
+                .set_id(rule.id)
+                .set_allowed_origins(Some(rule.allowed_origins))
+                .set_allowed_methods(Some(rule.allowed_methods))
+                .set_allowed_headers(Some(rule.allowed_headers))
+                .set_expose_headers(Some(rule.expose_headers))
+                .set_max_age_seconds(rule.max_age_seconds)
+                .build()
+                .map_err(|e| CoreError::Other(format!("CORS 规则无效：{e}")))?,
+        );
+    }
+    let configuration = aws_sdk_s3::types::CorsConfiguration::builder()
+        .set_cors_rules(Some(built))
+        .build()
+        .map_err(|e| CoreError::Other(format!("CORS 配置无效：{e}")))?;
+    client
+        .put_bucket_cors()
+        .bucket(bucket)
+        .cors_configuration(configuration)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
 pub async fn bucket_versioning(
     client: &Client,
     bucket: &str,
