@@ -233,6 +233,7 @@ pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
                 access_key: values.get("aws_access_key_id")?.clone(),
                 secret_key: values.get("aws_secret_access_key")?.clone(),
                 force_path_style: false,
+                read_only: false,
                 default_bucket: None,
                 ca_cert_path: None,
                 last_test: None,
@@ -649,8 +650,16 @@ fn reject_limited_connection(state: &App) -> Result<(), String> {
         Ok(())
     }
 }
+fn require_writable(state: &App) -> Result<(), String> {
+    if state.current_connection()?.read_only {
+        Err("当前连接处于只读模式，不能执行写操作".to_string())
+    } else {
+        Ok(())
+    }
+}
 #[tauri::command]
 pub async fn create_bucket(state: State<'_, App>, bucket: String) -> Result<(), String> {
+    require_writable(&state)?;
     reject_limited_connection(&state)?;
     let (client, _) = state.current_control_client()?;
     easys3_core::object::create_bucket(&client, &bucket)
@@ -659,6 +668,7 @@ pub async fn create_bucket(state: State<'_, App>, bucket: String) -> Result<(), 
 }
 #[tauri::command]
 pub async fn delete_bucket(state: State<'_, App>, bucket: String) -> Result<(), String> {
+    require_writable(&state)?;
     reject_limited_connection(&state)?;
     let (client, _) = state.current_control_client()?;
     easys3_core::object::delete_bucket(&client, &bucket)
@@ -682,6 +692,7 @@ pub async fn set_bucket_versioning(
     bucket: String,
     enabled: bool,
 ) -> Result<(), String> {
+    require_writable(&state)?;
     reject_limited_connection(&state)?;
     let (client, _) = state.current_control_client()?;
     easys3_core::object::set_bucket_versioning(&client, &bucket, enabled)
@@ -1202,6 +1213,7 @@ pub async fn save_object_tags(
     key: String,
     tags: Vec<easys3_core::object::ObjectTag>,
 ) -> Result<(), String> {
+    require_writable(&state)?;
     let (client, _) = state.current_client()?;
     easys3_core::object::put_object_tags(&client, &bucket, &key, &tags)
         .await
@@ -1226,6 +1238,7 @@ pub async fn restore_object_version(
     key: String,
     version: String,
 ) -> Result<(), String> {
+    require_writable(&state)?;
     let (client, _) = state.current_client()?;
     easys3_core::object::restore_object_version(&client, &bucket, &key, &version)
         .await
@@ -1239,6 +1252,7 @@ pub async fn create_folder(
     prefix: String,
     name: String,
 ) -> Result<(), String> {
+    require_writable(&state)?;
     let (client, _) = state.current_control_client()?;
     easys3_core::object::create_folder(&client, &bucket, &prefix, &name)
         .await
@@ -1260,6 +1274,7 @@ pub fn start_copy(
     new_name: Option<String>,
     remove: bool,
 ) -> Result<String, String> {
+    require_writable(&state)?;
     if let Some(name) = new_name.as_deref() {
         if name.is_empty() || name.contains('/') {
             return Err("新名称不能为空且不能包含 /".to_string());
@@ -1394,6 +1409,7 @@ pub fn start_upload(
     paths: Vec<String>,
     storage: Option<String>,
 ) -> Result<String, String> {
+    require_writable(&state)?;
     let connection = state.current_connection()?;
     let (client, _) = state.current_client()?;
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
@@ -1588,6 +1604,7 @@ pub fn start_delete(
     bucket: String,
     items: Vec<FsItem>,
 ) -> Result<String, String> {
+    require_writable(&state)?;
     // 删除任务用控制面客户端：展开列出与 DeleteObjects 均为小请求（带超时，规格）
     let (client, _) = state.current_control_client()?;
     let id = Uuid::new_v4().to_string();

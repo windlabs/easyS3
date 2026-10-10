@@ -117,6 +117,7 @@ mod tests {
             access_key: "ak".into(),
             secret_key: "sk".into(),
             force_path_style: true,
+            read_only: false,
             default_bucket: None,
             ca_cert_path: None,
             last_test: None,

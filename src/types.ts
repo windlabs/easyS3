@@ -10,6 +10,7 @@ export interface ConnectionConfig {
   access_key: string;
   secret_key: string;
   force_path_style: boolean;
+  read_only?: boolean;
   default_bucket?: string | null;
   /** 可选；服务用自签证书时指定 CA 证书（PEM 编码）文件路径 */
   ca_cert_path?: string | null;
@@ -154,6 +155,7 @@ export function blankConnection(): ConnectionConfig {
     access_key: "",
     secret_key: "",
     force_path_style: true,
+    read_only: false,
     default_bucket: null,
     ca_cert_path: null,
     last_test: null,

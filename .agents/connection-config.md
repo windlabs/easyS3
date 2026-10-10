@@ -13,6 +13,7 @@ interface ConnectionConfig {
   access_key: string         // 必填
   secret_key: string         // 必填
   force_path_style: boolean  // 默认 true（内部以 S3 兼容服务为主）
+  read_only: boolean         // 默认 false；开启后禁止此连接上的写操作
   default_bucket?: string    // 可选；限定单桶连接（AK 无 ListBuckets 权限时使用），填写后跳过桶列表直接进入
   ca_cert_path?: string      // 可选；服务使用自签证书时指定 CA 证书（PEM 编码）文件路径
   last_test?: { ok: boolean; msg: string; at: number } | null  // 最近一次「测试连接」结果，at 为 Unix 秒
@@ -44,6 +45,11 @@ interface ConnectionConfig {
 - 可导出连接配置文件；默认清空 `secret_key`。用户显式选择“包含凭据”时，必须二次确认并设置导出密码，整个导出内容以密码加密；导入加密文件时必须提供该密码。
 - 导入支持“同名跳过”（默认）与“同名覆盖”；格式或版本错误不得修改现有配置。导入的 Secret Key 仍写入 Keychain/AES-GCM 凭据存储，不能直接留在 `connections.json`。
 - 可读取 `~/.aws/credentials` 与 `~/.aws/config` 中的 profile，使用 credentials 的 AK/SK 与 config 的 region 生成待导入连接；用户确认后才保存。
+
+## P1-17 只读模式
+
+- `read_only` 为连接级持久化开关，默认 `false`。开启后前端隐藏上传、删除、复制、移动和新建文件夹等写入口，保留浏览、下载、预览与复制 Key。
+- Rust 命令层必须二次强制拒绝写操作，防止前端绕过；提示“当前连接处于只读模式，不能执行写操作”。
 
 ## 切换与删除行为
 

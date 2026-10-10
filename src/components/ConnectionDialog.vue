@@ -191,6 +191,12 @@ const { onMousedown, onClick } = useMaskClose(close);
           </label>
         </div>
         <div class="form-row">
+          <label class="check-label">
+            <input v-model="form.read_only" type="checkbox" />
+            只读模式（禁止上传、删除、复制、移动和新建文件夹）
+          </label>
+        </div>
+        <div class="form-row">
           <label>CA 证书（可选）</label>
           <input
             v-model="form.ca_cert_path"

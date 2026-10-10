@@ -85,6 +85,7 @@ const presignMode = ref<"get" | "put">("get");
 const presignSeconds = ref(3600);
 const presignKey = ref("");
 const presignUrls = ref<string[]>([]);
+const isReadOnly = computed(() => !!store.currentConnection()?.read_only);
 
 // 新建文件夹与历史 multipart 残片管理
 const newFolderName = ref("");
@@ -779,11 +780,11 @@ async function removeBucket() {
               @input="onFilterInput"
             />
              <button class="btn" @click="showSearch = true">全局搜索</button>
-             <button class="btn" @click="pickUpload(false)">上传文件</button>
-              <button class="btn" @click="pickUpload(true)">上传文件夹</button>
-              <button class="btn" @click="openSync('upload')">同步到 S3</button>
+              <button v-if="!isReadOnly" class="btn" @click="pickUpload(false)">上传文件</button>
+               <button v-if="!isReadOnly" class="btn" @click="pickUpload(true)">上传文件夹</button>
+               <button v-if="!isReadOnly" class="btn" @click="openSync('upload')">同步到 S3</button>
               <button class="btn" @click="openSync('download')">同步到本地</button>
-             <button class="btn" @click="showFolderDialog = true">新建文件夹</button>
+              <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
               <button class="btn" @click="openMultipartDialog">碎片管理</button>
               <button class="btn" @click="openPresign('put')">生成上传链接</button>
           </template>
@@ -795,19 +796,20 @@ async function removeBucket() {
           </button>
           <button class="btn" :disabled="!store.selection.size" @click="downloadZipSelection">下载 ZIP</button>
           <button class="btn" :disabled="!store.selection.size" @click="openPresign('get')">分享链接</button>
-          <button class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, false)">
+           <button v-if="!isReadOnly" class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, false)">
             复制
           </button>
-          <button class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, true)">
+           <button v-if="!isReadOnly" class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, true)">
             移动
           </button>
-          <button
+           <button v-if="!isReadOnly"
             class="btn danger"
             :disabled="!store.selection.size"
             @click="deleteSelection"
           >
             删除
-          </button>
+           </button>
+           <span v-if="isReadOnly" class="selected-count">🔒 当前连接为只读模式</span>
           <button class="btn ghost" @click="store.refresh()">刷新</button>
         </div>
 

@@ -28,6 +28,9 @@ pub struct ConnectionConfig {
     /// 默认 true（内部以 S3 兼容服务为主）
     #[serde(default = "default_true")]
     pub force_path_style: bool,
+    /// P1-17：连接级防误删模式，默认关闭。
+    #[serde(default)]
+    pub read_only: bool,
     /// 可选；限定单桶连接（AK 无 ListBuckets 权限时使用）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_bucket: Option<String>,
@@ -232,6 +235,7 @@ mod tests {
             access_key: "ak".to_string(),
             secret_key: "sk".to_string(),
             force_path_style: true,
+            read_only: false,
             default_bucket: None,
             ca_cert_path: None,
             last_test: None,
