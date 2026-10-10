@@ -83,8 +83,15 @@ function asItem(e: Entry): FsItem {
 
 // 滚动到底自动加载下一页（规格）
 const wrap = ref<HTMLElement | null>(null);
+const rowHeight = 42;
+const viewportHeight = ref(600);
+const scrollTop = ref(0);
+const virtualStart = computed(() => Math.max(0, Math.floor(scrollTop.value / rowHeight) - 8));
+const virtualEnd = computed(() => Math.min(sorted.value.length, virtualStart.value + Math.ceil(viewportHeight.value / rowHeight) + 16));
+const visibleRows = computed(() => sorted.value.slice(virtualStart.value, virtualEnd.value));
 function onScroll() {
   const el = wrap.value;
+  if (el) { scrollTop.value = el.scrollTop; viewportHeight.value = el.clientHeight; }
   if (!el || props.loading || !props.hasMore) return;
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) emit("loadMore");
 }
@@ -117,8 +124,9 @@ function onScroll() {
         <tr v-if="!sorted.length && !loading">
           <td :colspan="showStorage ? 6 : 5" class="empty-cell muted">当前目录为空</td>
         </tr>
+        <tr v-if="virtualStart" class="virtual-spacer"><td :colspan="showStorage ? 6 : 5" :style="{ height: (virtualStart * rowHeight) + 'px' }" /></tr>
         <tr
-          v-for="e in sorted"
+          v-for="e in visibleRows"
           :key="e.key"
           :class="{ selected: selection.has(e.key) }"
         >
@@ -151,6 +159,7 @@ function onScroll() {
             <button class="btn sm ghost danger" @click="emit('del', asItem(e))">删除</button>
           </td>
         </tr>
+        <tr v-if="sorted.length > virtualEnd" class="virtual-spacer"><td :colspan="showStorage ? 6 : 5" :style="{ height: ((sorted.length - virtualEnd) * rowHeight) + 'px' }" /></tr>
       </tbody>
     </table>
     <button class="column-toggle btn sm ghost" @click="toggleStorageColumn">
@@ -251,5 +260,6 @@ function onScroll() {
   text-align: center;
   padding: 10px 0;
 }
+.virtual-spacer td { padding: 0; border: 0; }
 .column-toggle { margin: 6px 10px; }
 </style>
