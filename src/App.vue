@@ -79,6 +79,7 @@ const showBucketDialog = ref(false);
 const showBucketManage = ref(false);
 const managedBucket = ref("");
 const bucketVersionStatus = ref("");
+const bucketFilter = ref("");
 const showPresign = ref(false);
 const presignMode = ref<"get" | "put">("get");
 const presignSeconds = ref(3600);
@@ -713,13 +714,15 @@ async function removeBucket() {
         </div>
         <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
           <div class="bucket-title">桶列表 <button class="btn sm" @click="showBucketDialog = true">新建桶</button></div>
+          <input v-model="bucketFilter" class="input bucket-filter" placeholder="筛选已加载桶名" />
           <div v-if="store.browse.loading" class="muted pad">加载中…</div>
           <template v-else>
             <div v-if="!store.browse.buckets.length" class="muted pad">
               暂无桶。若账号无 ListBuckets 权限，可在连接设置中填写限定桶。
             </div>
+            <div v-else-if="!store.browse.buckets.some((bucket) => bucket.toLowerCase().includes(bucketFilter.trim().toLowerCase()))" class="muted pad">没有匹配的桶。</div>
             <a
-              v-for="b in store.browse.buckets"
+              v-for="b in store.browse.buckets.filter((bucket) => bucket.toLowerCase().includes(bucketFilter.trim().toLowerCase()))"
               :key="b"
               class="bucket-item"
               :title="b"
@@ -1056,6 +1059,7 @@ async function removeBucket() {
   margin-bottom: 8px;
 }
 .bucket-title { display: flex; align-items: center; justify-content: space-between; }
+.bucket-filter { width: 100%; margin: 8px 0; }
 .bucket-manage { margin-left: auto; }
 .bucket-list .pad {
   padding: 4px 0;
