@@ -18,6 +18,7 @@ const emit = defineEmits<{
   openTransferSettings: [];
   manageConnections: [];
   setTaskNotifications: [value: boolean];
+  checkUpdate: [];
 }>();
 
 const open = ref(false);
@@ -216,6 +217,7 @@ onBeforeUnmount(() => {
         <span class="menu-check" aria-hidden="true" />导入 / 导出连接…
       </button>
       <button class="menu-item" type="button" role="menuitemcheckbox" :aria-checked="taskNotifications" @click="emit('setTaskNotifications', !taskNotifications)"><span class="menu-check">{{ taskNotifications ? "✓" : "" }}</span>任务完成通知</button>
+      <button class="menu-item" type="button" role="menuitem" @click="emit('checkUpdate')"><span class="menu-check" />检查更新…</button>
     </div>
   </div>
 </template>
