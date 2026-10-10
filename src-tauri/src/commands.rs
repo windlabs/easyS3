@@ -102,6 +102,51 @@ pub fn get_state(state: State<App>) -> StateDto {
 }
 
 #[tauri::command]
+pub fn get_audit(
+    state: State<App>,
+    connection: Option<String>,
+    since: Option<u64>,
+) -> Vec<easys3_core::audit::AuditEntry> {
+    lock(&state.audit)
+        .entries
+        .iter()
+        .filter(|entry| {
+            connection
+                .as_ref()
+                .is_none_or(|value| &entry.connection == value)
+        })
+        .filter(|entry| since.is_none_or(|value| entry.at >= value))
+        .cloned()
+        .collect()
+}
+#[tauri::command]
+pub fn export_audit(
+    state: State<App>,
+    path: String,
+    connection: Option<String>,
+    since: Option<u64>,
+) -> Result<(), String> {
+    let entries = get_audit(state, connection, since);
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("导出操作历史失败：{e}"))
+}
+#[tauri::command]
+pub fn record_audit(
+    state: State<App>,
+    bucket: String,
+    action: String,
+    status: String,
+    detail: String,
+) -> Result<(), String> {
+    let connection = state.current_connection()?.name;
+    state.record_audit(connection, bucket, action, status, detail);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn open_browser_window(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
     let label = format!("browser-{}", Uuid::new_v4());

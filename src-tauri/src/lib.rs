@@ -46,6 +46,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::get_audit,
+            commands::export_audit,
+            commands::record_audit,
             commands::open_browser_window,
             commands::export_connections,
             commands::import_connections,

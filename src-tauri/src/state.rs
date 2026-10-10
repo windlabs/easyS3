@@ -5,6 +5,7 @@
 
 use crate::secrets::SecretStore;
 use crate::tasks::TaskEntry;
+use easys3_core::audit::{self, AuditFile};
 use easys3_core::config::{load_connections, save_connections, ConnectionConfig, ConnectionsFile};
 use easys3_core::resume::{load_resume_file, save_resume_file, ResumeFile};
 use easys3_core::settings::{load_settings, TransferSettings};
@@ -21,6 +22,8 @@ pub struct App {
     /// P1-01 未完成上传/下载检查点；不含凭据。
     pub resume_path: PathBuf,
     pub resume: Arc<Mutex<ResumeFile>>,
+    pub audit_path: PathBuf,
+    pub audit: Mutex<AuditFile>,
     /// 传输设置快照（保存设置时更新；任务启动时读取快照）
     pub settings: Mutex<TransferSettings>,
     /// 全局上传限速（跨任务共享，保存设置热调整）
@@ -73,6 +76,7 @@ impl App {
         }
         let settings_path = dir.join("settings.json");
         let resume_path = dir.join("transfers.json");
+        let audit_path = dir.join("history.json");
         let resume = load_resume_file(&resume_path).unwrap_or_default();
         let settings = load_settings(&settings_path);
         let upload_throttle = Arc::new(Throttle::new(settings.upload_limit_kbps * 1024));
@@ -84,6 +88,8 @@ impl App {
             settings_path,
             resume_path,
             resume: Arc::new(Mutex::new(resume)),
+            audit_path: audit_path.clone(),
+            audit: Mutex::new(audit::load(&audit_path).unwrap_or_default()),
             settings: Mutex::new(settings),
             upload_throttle,
             download_throttle,
@@ -195,5 +201,28 @@ impl App {
     pub fn save_resume(&self) -> Result<(), String> {
         let file = lock(&self.resume).clone();
         save_resume_file(&self.resume_path, &file).map_err(|e| e.to_string())
+    }
+    pub fn record_audit(
+        &self,
+        connection: String,
+        bucket: String,
+        action: String,
+        status: String,
+        detail: String,
+    ) {
+        let mut audit = lock(&self.audit);
+        audit.entries.push(audit::AuditEntry {
+            at: audit::now(),
+            connection,
+            bucket,
+            action,
+            status,
+            detail,
+        });
+        if audit.entries.len() > 2000 {
+            let drain = audit.entries.len() - 2000;
+            audit.entries.drain(0..drain);
+        }
+        let _ = audit::save(&self.audit_path, &audit);
     }
 }

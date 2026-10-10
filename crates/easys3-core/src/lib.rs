@@ -8,6 +8,7 @@
 //! - `list` / `upload` / `download` / `delete` / `preview` <- `.agents/s3-operations.md`
 //! - `error`   <- `.agents/s3-operations.md` 错误分类规范
 
+pub mod audit;
 pub mod config;
 pub mod delete;
 pub mod download;

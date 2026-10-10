@@ -238,6 +238,9 @@ export async function initTasks() {
     ) {
       void refresh();
     }
+    if (t.status === "done" || t.status === "failed" || t.status === "canceled") {
+      void api.recordAudit(t.bucket, t.kind, t.status, t.failures.map((failure) => `${failure.key}: ${failure.error}`).join("；") || t.current_file || "");
+    }
     if (!isNew) void notifyTaskFinish(t);
     maybeScheduleTasksAutoClose();
   });

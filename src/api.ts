@@ -24,6 +24,9 @@ import type {
 // 命令参数一律使用与 Rust 参数名完全一致的键（均为单词，规避大小写转换问题）
 
 export const getState = () => invoke<StateDto>("get_state");
+export const getAudit = (connection: string | null, since: number | null) => invoke<import("./types").AuditEntry[]>("get_audit", { connection, since });
+export const exportAudit = (path: string, connection: string | null, since: number | null) => invoke<void>("export_audit", { path, connection, since });
+export const recordAudit = (bucket: string, action: string, status: string, detail: string) => invoke<void>("record_audit", { bucket, action, status, detail });
 export const openBrowserWindow = () => invoke<void>("open_browser_window");
 export const exportConnections = (path: string, secrets: boolean, password: string | null) => invoke<void>("export_connections", { path, secrets, password });
 export const importConnections = (path: string, overwrite: boolean, password: string | null) => invoke<number>("import_connections", { path, overwrite, password });

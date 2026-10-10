@@ -19,6 +19,7 @@ const emit = defineEmits<{
   manageConnections: [];
   setTaskNotifications: [value: boolean];
   checkUpdate: [];
+  openAudit: [];
 }>();
 
 const open = ref(false);
@@ -218,6 +219,7 @@ onBeforeUnmount(() => {
       </button>
       <button class="menu-item" type="button" role="menuitemcheckbox" :aria-checked="taskNotifications" @click="emit('setTaskNotifications', !taskNotifications)"><span class="menu-check">{{ taskNotifications ? "✓" : "" }}</span>任务完成通知</button>
       <button class="menu-item" type="button" role="menuitem" @click="emit('checkUpdate')"><span class="menu-check" />检查更新…</button>
+      <button class="menu-item" type="button" role="menuitem" @click="emit('openAudit')"><span class="menu-check" />操作历史…</button>
     </div>
   </div>
 </template>
