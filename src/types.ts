@@ -49,6 +49,7 @@ export interface ObjectDetail {
   storage_class: string | null;
   content_type: string | null;
   metadata: { key: string; value: string }[];
+  restore_status?: string | null;
 }
 export interface ObjectVersionInfo {
   version_id: string; size: number; last_modified: string | null; is_delete_marker: boolean; is_latest: boolean;

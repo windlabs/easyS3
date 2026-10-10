@@ -63,6 +63,8 @@ export const exportPresignList = (path: string, urls: string[]) =>
   invoke<void>("export_presign_list", { path, urls });
 export const objectDetail = (bucket: string, key: string) =>
   invoke<ObjectDetail>("object_detail", { bucket, key });
+export const restoreArchivedObject = (bucket: string, key: string, days: number, tier: string) =>
+  invoke<void>("restore_archived_object", { bucket, key, days, tier });
 export const objectVersions = (bucket: string, key: string) => invoke<ObjectVersionInfo[]>("object_versions", { bucket, key });
 export const restoreObjectVersion = (bucket: string, key: string, version: string) => invoke<void>("restore_object_version", { bucket, key, version });
 export const replaceObjectMetadata = (bucket: string, key: string, contentType: string, metadata: ObjectTag[]) => invoke<void>("replace_object_metadata", { bucket, key, content_type: contentType, metadata });

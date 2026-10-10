@@ -14,6 +14,42 @@ pub struct ObjectDetail {
     pub storage_class: Option<String>,
     pub content_type: Option<String>,
     pub metadata: Vec<MetadataEntry>,
+    pub restore_status: Option<String>,
+}
+
+pub async fn restore_archived_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    days: i32,
+    tier: &str,
+) -> Result<(), CoreError> {
+    if !(1..=365).contains(&days) {
+        return Err(CoreError::Other(
+            "恢复保留天数必须在 1 至 365 天之间".into(),
+        ));
+    }
+    let tier = tier
+        .parse::<aws_sdk_s3::types::Tier>()
+        .map_err(|_| CoreError::Other("不支持的恢复速度".into()))?;
+    let request = aws_sdk_s3::types::RestoreRequest::builder()
+        .days(days)
+        .glacier_job_parameters(
+            aws_sdk_s3::types::GlacierJobParameters::builder()
+                .tier(tier)
+                .build()
+                .map_err(|e| CoreError::Other(format!("恢复请求无效：{e}")))?,
+        )
+        .build();
+    client
+        .restore_object()
+        .bucket(bucket)
+        .key(key)
+        .restore_request(request)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -331,6 +367,7 @@ pub async fn head_object(
         storage_class: out.storage_class().map(|value| value.as_str().to_owned()),
         content_type: out.content_type().map(ToOwned::to_owned),
         metadata,
+        restore_status: out.restore().map(ToOwned::to_owned),
     })
 }
 

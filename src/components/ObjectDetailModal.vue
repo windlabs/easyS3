@@ -18,6 +18,8 @@ const accessLoaded = ref(false);
 const editingMetadata = ref(false);
 const editContentType = ref("");
 const editMetadata = ref<ObjectTag[]>([]);
+const restoreDays = ref(7);
+const restoreTier = ref("Standard");
 
 watch(() => [props.modelValue, props.detail?.key] as const, ([open]) => {
   if (!open) { versions.value = []; versionsError.value = ""; }
@@ -55,6 +57,8 @@ async function saveTags() {
 }
 function beginMetadataEdit() { if (!props.detail) return; editContentType.value = props.detail.content_type || "application/octet-stream"; editMetadata.value = props.detail.metadata.map((item) => ({ key: item.key, value: item.value })); editingMetadata.value = true; }
 async function saveMetadata() { if (!props.detail) return; try { await api.replaceObjectMetadata(props.bucket, props.detail.key, editContentType.value, editMetadata.value); editingMetadata.value = false; emit("update:modelValue", false); } catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); } }
+function archival() { return props.detail?.storage_class === "GLACIER" || props.detail?.storage_class === "DEEP_ARCHIVE"; }
+async function restoreArchive() { if (!props.detail || !confirm("将发起归档对象恢复请求，是否继续？")) return; try { await api.restoreArchivedObject(props.bucket, props.detail.key, restoreDays.value, restoreTier.value); } catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); } }
 </script>
 
 <template>
@@ -70,6 +74,8 @@ async function saveMetadata() { if (!props.detail) return; try { await api.repla
           <dt>存储类别</dt><dd>{{ detail.storage_class || "STANDARD" }}</dd>
           <dt>Content-Type</dt><dd>{{ detail.content_type || "—" }}</dd>
         </dl>
+        <div v-if="archival()" class="meta-title">归档恢复</div>
+        <div v-if="archival()" class="access-panel"><p>状态：{{ detail.restore_status || "尚未恢复" }}</p><label class="tag-row"><span>保留天数</span><input v-model.number="restoreDays" class="input" type="number" min="1" max="365" /></label><label class="tag-row"><span>恢复速度</span><select v-model="restoreTier" class="select"><option value="Expedited">快速</option><option value="Standard">标准</option><option value="Bulk">批量</option></select></label><button class="btn" @click="restoreArchive">发起恢复</button></div>
         <div class="meta-title version-head"><span>对象元数据</span><button class="btn sm" @click="beginMetadataEdit">编辑</button></div>
         <div v-if="editingMetadata" class="access-panel"><label class="tag-row"><span>Content-Type</span><input v-model="editContentType" class="input" /></label><div v-for="(item, index) in editMetadata" :key="index" class="tag-row"><input v-model="item.key" class="input" placeholder="x-amz-meta-* 名称" /><input v-model="item.value" class="input" placeholder="值" /><button class="btn sm" @click="editMetadata.splice(index, 1)">删除</button></div><div class="tag-actions"><button class="btn sm" @click="editMetadata.push({ key: '', value: '' })">新增元数据</button><button class="btn sm primary" @click="saveMetadata">保存</button></div></div>
         <div v-if="detail.metadata.length" class="meta-title">自定义元数据</div>

@@ -77,6 +77,7 @@ pub fn run() {
             commands::presign_put,
             commands::export_presign_list,
             commands::object_detail,
+            commands::restore_archived_object,
             commands::object_versions,
             commands::object_tags,
             commands::save_object_tags,

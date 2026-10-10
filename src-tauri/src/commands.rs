@@ -1211,6 +1211,21 @@ pub async fn object_detail(
 }
 
 #[tauri::command]
+pub async fn restore_archived_object(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    days: i32,
+    tier: String,
+) -> Result<(), String> {
+    require_writable(&state)?;
+    let (client, _) = state.current_client()?;
+    easys3_core::object::restore_archived_object(&client, &bucket, &key, days, &tier)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn object_versions(
     state: State<'_, App>,
     bucket: String,

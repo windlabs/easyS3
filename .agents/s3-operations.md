@@ -162,3 +162,8 @@
 
 - 对象详情可编辑 Content-Type 与 `x-amz-meta-*` 自定义键值；保存用 CopyObject 原地复制并设置 `metadata_directive=REPLACE`。
 - CopyObject 单请求超过 5GB 时必须明确拒绝；失败按通用分类提示。编辑不修改对象体。
+
+## 20. 归档对象恢复（P2-03）
+
+- GLACIER / DEEP_ARCHIVE 对象详情显示恢复入口和服务端 restore 状态；可选择 1–365 天保留期及 Expedited / Standard / Bulk 检索速度。
+- 非归档对象不显示恢复入口。恢复请求失败按通用错误规范显示，恢复完成后可沿用下载/预览流程。
