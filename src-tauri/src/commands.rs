@@ -247,7 +247,6 @@ pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
                 secret_key: values.get("aws_secret_access_key")?.clone(),
                 force_path_style: false,
                 read_only: false,
-                proxy: None,
                 default_bucket: None,
                 ca_cert_path: None,
                 last_test: None,
