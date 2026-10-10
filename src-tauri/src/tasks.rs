@@ -8,6 +8,7 @@ use easys3_core::delete::delete_keys;
 use easys3_core::download::{download_object, download_object_resumable};
 use easys3_core::error::CoreError;
 use easys3_core::list::collect_prefix_objects;
+use easys3_core::list::SearchEntry;
 use easys3_core::plan::{key_matches_failure, unique_path};
 use easys3_core::settings::TransferSettings;
 use easys3_core::throttle::Throttle;
@@ -34,6 +35,7 @@ pub enum TaskKind {
     Delete,
     /// 桶内复制 / 移动 / 重命名（服务端 copy_object，规格 §6）
     Copy,
+    Search,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -70,6 +72,13 @@ pub struct TaskInfo {
     /// 瞬时错误自动重试累计次数（任务中心展示）
     pub retry_count: usize,
     pub created_at: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct SearchResultEvent {
+    pub id: String,
+    pub results: Vec<SearchEntry>,
+    pub error: Option<String>,
 }
 
 /// 前端传入的条目（文件 key 或目录前缀）
@@ -158,6 +167,46 @@ pub fn spawn_sync_local_delete(
                 emit_task(&app, &shared, false);
             }
             finish_task(&app, &cancel, &shared);
+        });
+    });
+}
+
+pub fn spawn_search(
+    app: tauri::AppHandle,
+    client: aws_sdk_s3::Client,
+    id: String,
+    buckets: Vec<String>,
+    filter: easys3_core::search::SearchFilter,
+    cancel: Arc<AtomicBool>,
+    shared: Arc<TaskShared>,
+) {
+    let probe = shared.clone();
+    schedule(&probe, move || {
+        tauri::async_runtime::spawn(async move {
+            mark_running(&shared);
+            let mut results = Vec::new();
+            let mut error = None;
+            for bucket in buckets {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                lock(&shared.info).current_file = Some(bucket.clone());
+                match easys3_core::list::search_objects(&client, &bucket, &filter, &cancel).await {
+                    Ok(mut entries) => {
+                        lock(&shared.info).files_done += 1;
+                        results.append(&mut entries);
+                    }
+                    Err(CoreError::Cancelled) => break,
+                    Err(err) => {
+                        record_failure(&shared, &bucket, err.to_string());
+                        error = Some(err.to_string());
+                        break;
+                    }
+                }
+                emit_task(&app, &shared, false);
+            }
+            finish_task(&app, &cancel, &shared);
+            let _ = app.emit("search-result", SearchResultEvent { id, results, error });
         });
     });
 }

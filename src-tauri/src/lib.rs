@@ -35,6 +35,7 @@ pub fn run() {
             commands::count_objects,
             commands::plan_sync_upload,
             commands::plan_sync_download,
+            commands::start_search,
             commands::start_sync_upload,
             commands::start_sync_download,
             commands::preview_object,

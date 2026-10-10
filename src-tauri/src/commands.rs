@@ -566,6 +566,42 @@ pub async fn plan_sync_download(
 }
 
 #[tauri::command]
+pub async fn start_search(
+    state: State<'_, App>,
+    app: tauri::AppHandle,
+    bucket: Option<String>,
+    query: String,
+) -> Result<String, String> {
+    let filter = easys3_core::search::parse(&query).map_err(|e| e.to_string())?;
+    let (client, _) = state.current_control_client()?;
+    let buckets = match bucket.filter(|bucket| !bucket.is_empty()) {
+        Some(bucket) => vec![bucket],
+        None => easys3_core::list::list_buckets(&client)
+            .await
+            .map_err(|e| e.to_string())?,
+    };
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(
+        &id,
+        TaskKind::Search,
+        "搜索",
+        buckets.len(),
+        0,
+    ));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry: Arc::new(Mutex::new(None)),
+        },
+    );
+    tasks::spawn_search(app, client, id.clone(), buckets, filter, cancel, shared);
+    Ok(id)
+}
+
+#[tauri::command]
 pub fn start_sync_upload(
     state: State<App>,
     app: tauri::AppHandle,

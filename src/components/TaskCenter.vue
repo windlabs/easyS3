@@ -17,6 +17,7 @@ const kindLabel: Record<TaskInfo["kind"], string> = {
   download: "下载",
   delete: "删除",
   copy: "复制/移动",
+  search: "搜索",
 };
 const statusLabel: Record<TaskInfo["status"], string> = {
   queued: "排队中",
@@ -34,7 +35,7 @@ const hasFinished = computed(() =>
 );
 
 // 复制/移动与删除按对象计数展示进度（无本地字节流）
-const countKind = (t: TaskInfo) => t.kind === "delete" || t.kind === "copy";
+const countKind = (t: TaskInfo) => t.kind === "delete" || t.kind === "copy" || t.kind === "search";
 
 function percent(t: TaskInfo): number | null {
   if (countKind(t)) {

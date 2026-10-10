@@ -29,6 +29,15 @@ pub struct ListResult {
     pub next_token: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchEntry {
+    pub bucket: String,
+    pub key: String,
+    pub size: u64,
+    pub last_modified: Option<String>,
+    pub storage_class: Option<String>,
+}
+
 pub async fn list_buckets(client: &Client) -> Result<Vec<String>, CoreError> {
     let out = client
         .list_buckets()
@@ -195,6 +204,60 @@ pub async fn collect_prefix_sizes(
         }
     }
     Ok(result)
+}
+
+/// P1-08 分页扫描单桶对象并应用 DSL 条件；调用方负责控制跨桶并发。
+pub async fn search_objects(
+    client: &Client,
+    bucket: &str,
+    filter: &crate::search::SearchFilter,
+    cancel: &Arc<AtomicBool>,
+) -> Result<Vec<SearchEntry>, CoreError> {
+    let mut found = Vec::new();
+    let mut token = None;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CoreError::Cancelled);
+        }
+        let out = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .max_keys(PAGE_SIZE)
+            .set_continuation_token(token)
+            .send()
+            .await
+            .map_err(|e| classify(&e))?;
+        for object in out.contents() {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(CoreError::Cancelled);
+            }
+            let key = object.key().unwrap_or_default();
+            let size = object.size().unwrap_or(0).max(0) as u64;
+            if key.is_empty() || is_dir_marker(key, size as i64) {
+                continue;
+            }
+            let class = object.storage_class().map(|value| value.as_str());
+            let modified = object.last_modified().and_then(|time| {
+                u64::try_from(time.secs())
+                    .ok()
+                    .map(|seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+            });
+            if crate::search::matches(filter, size, modified, class) {
+                found.push(SearchEntry {
+                    bucket: bucket.to_owned(),
+                    key: key.to_owned(),
+                    size,
+                    last_modified: object.last_modified().map(ToString::to_string),
+                    storage_class: class.map(ToOwned::to_owned),
+                });
+            }
+        }
+        token = out.next_continuation_token().map(ToOwned::to_owned);
+        if token.is_none() {
+            break;
+        }
+    }
+    Ok(found)
 }
 
 /// 目录占位对象：key 以 `/` 结尾且 0 字节（UI 渲染为文件夹，规格 §1）。

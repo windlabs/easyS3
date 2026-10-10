@@ -19,6 +19,7 @@ pub mod presign;
 pub mod preview;
 pub mod resume;
 pub mod s3;
+pub mod search;
 pub mod settings;
 pub mod sync;
 pub mod throttle;

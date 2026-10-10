@@ -44,6 +44,7 @@ export const planSyncUpload = (bucket: string, prefix: string, local: string, pr
 export const planSyncDownload = (bucket: string, prefix: string, local: string, propagate: boolean) => invoke<SyncPlan>("plan_sync_download", { bucket, prefix, local, propagate });
 export const startSyncUpload = (bucket: string, plan: SyncPlan) => invoke<string[]>("start_sync_upload", { bucket, plan });
 export const startSyncDownload = (bucket: string, plan: SyncPlan) => invoke<string[]>("start_sync_download", { bucket, plan });
+export const startSearch = (bucket: string | null, query: string) => invoke<string>("start_search", { bucket, query });
 export const previewObject = (bucket: string, key: string) =>
   invoke<PreviewData>("preview_object", { bucket, key });
 export const isDownloadDirectory = (dest: string) =>

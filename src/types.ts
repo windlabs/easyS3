@@ -57,6 +57,7 @@ export interface ObjectAclInfo { owner: string | null; grants: string[]; }
 export interface BucketVersioningInfo { status: string; }
 export interface SyncPlanItem { source: string; target: string; action: string; size: number; }
 export interface SyncPlan { create: SyncPlanItem[]; update: SyncPlanItem[]; delete: SyncPlanItem[]; skipped: number; }
+export interface SearchEntry { bucket: string; key: string; size: number; last_modified: string | null; storage_class: string | null; }
 
 export interface MultipartUploadInfo {
   key: string;
@@ -100,7 +101,7 @@ export interface Failure {
   error: string;
 }
 
-export type TaskKind = "upload" | "download" | "delete" | "copy";
+export type TaskKind = "upload" | "download" | "delete" | "copy" | "search";
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "canceled";
 
 export interface TaskInfo {

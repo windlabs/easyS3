@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -14,6 +15,7 @@ import type {
   ConnectionConfig,
   UploadPlan,
   SyncPlan,
+  SearchEntry,
 } from "./types";
 import { errorMessage, formatBytes, uuid } from "./utils";
 import Breadcrumb from "./components/Breadcrumb.vue";
@@ -55,6 +57,12 @@ const previewName = ref("");
 const showObjectDetail = ref(false);
 const objectDetail = ref<import("./types").ObjectDetail | null>(null);
 const showSettings = ref(false);
+const showSearch = ref(false);
+const searchQuery = ref("");
+const searchAcrossBuckets = ref(false);
+const searchResults = ref<SearchEntry[]>([]);
+const searching = ref(false);
+const searchError = ref("");
 const showSyncDialog = ref(false);
 const syncDirection = ref<"upload" | "download">("upload");
 const syncLocalDir = ref("");
@@ -545,6 +553,25 @@ async function openFile(entry: Entry) {
   }
 }
 
+async function runSearch() {
+  searching.value = true; searchError.value = ""; searchResults.value = [];
+  try {
+    const id = await api.startSearch(searchAcrossBuckets.value ? null : store.browse.bucket, searchQuery.value);
+    store.tasksStore.open = true;
+    const unlisten = await listen<{ id: string; results: SearchEntry[]; error: string | null }>("search-result", (event) => {
+      if (event.payload.id !== id) return;
+      searchResults.value = event.payload.results; searchError.value = event.payload.error || ""; searching.value = false; unlisten();
+    });
+  }
+  catch (e) { searchError.value = errorMessage(e); }
+}
+async function jumpToSearch(entry: SearchEntry) {
+  if (entry.bucket !== store.browse.bucket) await store.selectBucket(entry.bucket);
+  const index = entry.key.lastIndexOf("/");
+  await store.navigatePrefix(index >= 0 ? entry.key.slice(0, index + 1) : "");
+  showSearch.value = false;
+}
+
 async function openSync(direction: "upload" | "download") {
   if (store.browse.mode !== "objects") return;
   const dir = await openDialog({ directory: true, title: direction === "upload" ? "选择要同步到 S3 的本地文件夹" : "选择同步到本地的文件夹" });
@@ -703,6 +730,7 @@ async function removeBucket() {
               :value="store.browse.filter"
               @input="onFilterInput"
             />
+             <button class="btn" @click="showSearch = true">全局搜索</button>
              <button class="btn" @click="pickUpload(false)">上传文件</button>
               <button class="btn" @click="pickUpload(true)">上传文件夹</button>
               <button class="btn" @click="openSync('upload')">同步到 S3</button>
@@ -824,6 +852,8 @@ async function removeBucket() {
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
+
+    <div v-if="showSearch" class="modal-mask"><div class="modal search-modal"><div class="modal-head">全局搜索与高级过滤</div><div class="modal-body copy-form"><input v-model="searchQuery" class="input" placeholder="例如 size>10MB AND modified>30d AND class=GLACIER" @keyup.enter="runSearch" /><label><input v-model="searchAcrossBuckets" type="checkbox" /> 搜索当前连接的所有桶</label><p class="copy-hint">语法：size&gt;10MB、size&lt;1GB、modified&gt;30d、class=GLACIER；使用 AND 连接。</p><div v-if="searching" class="muted">正在分页搜索，可继续操作其他界面…</div><div v-if="searchError" class="version-error">{{ searchError }}</div><div v-if="searchResults.length" class="search-results"><button v-for="item in searchResults" :key="`${item.bucket}/${item.key}`" class="search-row" @click="jumpToSearch(item)"><b>{{ item.bucket }}</b><span>{{ item.key }}</span><span>{{ formatBytes(item.size) }}</span></button></div><div v-else-if="!searching && !searchError" class="muted">输入条件后搜索；空条件可列出范围内所有文件。</div></div><div class="modal-foot"><button class="btn" @click="showSearch = false">关闭</button><button class="btn primary" :disabled="searching" @click="runSearch">搜索</button></div></div></div>
 
     <div v-if="showSyncDialog" class="modal-mask"><div class="modal sync-modal"><div class="modal-head">{{ syncDirection === "upload" ? "本地文件夹同步到 S3" : "S3 前缀同步到本地" }}</div><div class="modal-body copy-form"><p>本地目录：<b class="break">{{ syncLocalDir }}</b></p><p>目标：<b>{{ syncDirection === "upload" ? `${store.browse.bucket}/${store.browse.prefix}` : store.browse.prefix || `${store.browse.bucket} 根目录` }}</b></p><label><input v-model="syncPropagateDelete" type="checkbox" @change="buildSyncPlan" /> 同步删除（默认关闭，需确认后才执行）</label><div v-if="syncPlanning" class="muted">正在生成计划…</div><template v-else-if="syncPlan"><p>计划：新增 <b>{{ syncPlan.create.length }}</b>，更新 <b>{{ syncPlan.update.length }}</b>，删除 <b>{{ syncPlan.delete.length }}</b>，跳过 <b>{{ syncPlan.skipped }}</b>。</p><div class="sync-items"><div v-for="item in [...syncPlan.create, ...syncPlan.update, ...syncPlan.delete].slice(0, 20)" :key="item.source + item.target">{{ item.action }} · {{ item.source }}</div><div v-if="syncPlan.create.length + syncPlan.update.length + syncPlan.delete.length > 20" class="muted">仅显示前 20 项</div></div></template></div><div class="modal-foot"><button class="btn" @click="showSyncDialog = false">关闭</button><button class="btn" :disabled="syncPlanning" @click="buildSyncPlan">重新比较</button><button class="btn primary" :disabled="syncPlanning || !syncPlan" @click="startSync">开始同步</button></div></div></div>
 
@@ -1075,6 +1105,11 @@ async function removeBucket() {
 .presign-result { min-height: 130px; resize: vertical; font-family: ui-monospace, monospace; }
 .sync-modal { width: min(720px, 94vw); }
 .sync-items { max-height: 180px; overflow: auto; border-top: 1px solid var(--border); padding-top: 6px; font-size: 12px; }
+.search-modal { width: min(800px, 94vw); }
+.search-results { max-height: 280px; overflow: auto; border-top: 1px solid var(--border); }
+.search-row { width: 100%; display: grid; grid-template-columns: 130px 1fr 100px; text-align: left; gap: 8px; padding: 7px 0; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
+.search-row:hover { color: var(--primary); }
+.search-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
 .break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }
