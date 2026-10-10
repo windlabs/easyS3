@@ -163,6 +163,40 @@ pub async fn collect_prefix_objects(
     }
 }
 
+/// 收集前缀下文件 key 与大小，供同步计划比较；目录占位对象不计入。
+pub async fn collect_prefix_sizes(
+    client: &Client,
+    bucket: &str,
+    prefix: &str,
+    cancel: &Arc<AtomicBool>,
+) -> Result<std::collections::HashMap<String, u64>, CoreError> {
+    let mut result = std::collections::HashMap::new();
+    let mut token = None;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CoreError::Cancelled);
+        }
+        let out = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .set_continuation_token(token)
+            .send()
+            .await
+            .map_err(|e| classify(&e))?;
+        for object in out.contents() {
+            if let Some(key) = object.key().filter(|key| !key.ends_with('/')) {
+                result.insert(key.to_owned(), object.size().unwrap_or(0).max(0) as u64);
+            }
+        }
+        token = out.next_continuation_token().map(ToOwned::to_owned);
+        if token.is_none() {
+            break;
+        }
+    }
+    Ok(result)
+}
+
 /// 目录占位对象：key 以 `/` 结尾且 0 字节（UI 渲染为文件夹，规格 §1）。
 /// 与 `list_objects` 的渲染判定保持一致：非 0 字节的 `/` 结尾 key 仍按对象处理。
 pub fn is_dir_marker(key: &str, size: i64) -> bool {

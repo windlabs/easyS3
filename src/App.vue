@@ -13,6 +13,7 @@ import type {
   PreviewData,
   ConnectionConfig,
   UploadPlan,
+  SyncPlan,
 } from "./types";
 import { errorMessage, formatBytes, uuid } from "./utils";
 import Breadcrumb from "./components/Breadcrumb.vue";
@@ -54,6 +55,12 @@ const previewName = ref("");
 const showObjectDetail = ref(false);
 const objectDetail = ref<import("./types").ObjectDetail | null>(null);
 const showSettings = ref(false);
+const showSyncDialog = ref(false);
+const syncDirection = ref<"upload" | "download">("upload");
+const syncLocalDir = ref("");
+const syncPropagateDelete = ref(false);
+const syncPlan = ref<SyncPlan | null>(null);
+const syncPlanning = ref(false);
 const newBucketName = ref("");
 const showBucketDialog = ref(false);
 const showBucketManage = ref(false);
@@ -538,6 +545,29 @@ async function openFile(entry: Entry) {
   }
 }
 
+async function openSync(direction: "upload" | "download") {
+  if (store.browse.mode !== "objects") return;
+  const dir = await openDialog({ directory: true, title: direction === "upload" ? "选择要同步到 S3 的本地文件夹" : "选择同步到本地的文件夹" });
+  if (!dir) return;
+  syncDirection.value = direction; syncLocalDir.value = dir; syncPropagateDelete.value = false; syncPlan.value = null; showSyncDialog.value = true;
+  await buildSyncPlan();
+}
+async function buildSyncPlan() {
+  if (!syncLocalDir.value) return;
+  syncPlanning.value = true;
+  try { syncPlan.value = syncDirection.value === "upload" ? await api.planSyncUpload(store.browse.bucket, store.browse.prefix, syncLocalDir.value, syncPropagateDelete.value) : await api.planSyncDownload(store.browse.bucket, store.browse.prefix, syncLocalDir.value, syncPropagateDelete.value); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+  finally { syncPlanning.value = false; }
+}
+async function startSync() {
+  if (!syncPlan.value) return;
+  try {
+    if (syncPlan.value.delete.length && !confirm(`同步将删除 ${syncPlan.value.delete.length} 项，操作不可恢复，是否继续？`)) return;
+    const ids = syncDirection.value === "upload" ? await api.startSyncUpload(store.browse.bucket, syncPlan.value) : await api.startSyncDownload(store.browse.bucket, syncPlan.value);
+    store.tasksStore.open = true; showSyncDialog.value = false; store.toast(`同步任务已开始（${ids.length} 个任务）`);
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
 async function createBucket() {
   const name = newBucketName.value.trim();
   if (!name) return;
@@ -674,7 +704,9 @@ async function removeBucket() {
               @input="onFilterInput"
             />
              <button class="btn" @click="pickUpload(false)">上传文件</button>
-             <button class="btn" @click="pickUpload(true)">上传文件夹</button>
+              <button class="btn" @click="pickUpload(true)">上传文件夹</button>
+              <button class="btn" @click="openSync('upload')">同步到 S3</button>
+              <button class="btn" @click="openSync('download')">同步到本地</button>
              <button class="btn" @click="showFolderDialog = true">新建文件夹</button>
               <button class="btn" @click="openMultipartDialog">碎片管理</button>
               <button class="btn" @click="openPresign('put')">生成上传链接</button>
@@ -792,6 +824,8 @@ async function removeBucket() {
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
+
+    <div v-if="showSyncDialog" class="modal-mask"><div class="modal sync-modal"><div class="modal-head">{{ syncDirection === "upload" ? "本地文件夹同步到 S3" : "S3 前缀同步到本地" }}</div><div class="modal-body copy-form"><p>本地目录：<b class="break">{{ syncLocalDir }}</b></p><p>目标：<b>{{ syncDirection === "upload" ? `${store.browse.bucket}/${store.browse.prefix}` : store.browse.prefix || `${store.browse.bucket} 根目录` }}</b></p><label><input v-model="syncPropagateDelete" type="checkbox" @change="buildSyncPlan" /> 同步删除（默认关闭，需确认后才执行）</label><div v-if="syncPlanning" class="muted">正在生成计划…</div><template v-else-if="syncPlan"><p>计划：新增 <b>{{ syncPlan.create.length }}</b>，更新 <b>{{ syncPlan.update.length }}</b>，删除 <b>{{ syncPlan.delete.length }}</b>，跳过 <b>{{ syncPlan.skipped }}</b>。</p><div class="sync-items"><div v-for="item in [...syncPlan.create, ...syncPlan.update, ...syncPlan.delete].slice(0, 20)" :key="item.source + item.target">{{ item.action }} · {{ item.source }}</div><div v-if="syncPlan.create.length + syncPlan.update.length + syncPlan.delete.length > 20" class="muted">仅显示前 20 项</div></div></template></div><div class="modal-foot"><button class="btn" @click="showSyncDialog = false">关闭</button><button class="btn" :disabled="syncPlanning" @click="buildSyncPlan">重新比较</button><button class="btn primary" :disabled="syncPlanning || !syncPlan" @click="startSync">开始同步</button></div></div></div>
 
     <div v-if="showBucketDialog" class="modal-mask"><div class="modal small-modal"><div class="modal-head">新建桶</div><div class="modal-body"><input v-model="newBucketName" class="input" placeholder="桶名（3–63 位小写字母、数字、点或连字符）" @keyup.enter="createBucket" /></div><div class="modal-foot"><button class="btn" @click="showBucketDialog = false">取消</button><button class="btn primary" @click="createBucket">创建</button></div></div></div>
     <div v-if="showBucketManage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶管理：{{ managedBucket }}</div><div class="modal-body copy-form"><p>版本控制：<b>{{ bucketVersionStatus }}</b></p><p class="copy-hint">删除桶前必须清空桶内对象。</p></div><div class="modal-foot"><button class="btn" @click="showBucketManage = false">关闭</button><button class="btn" :disabled="bucketVersionStatus === '加载中…'" @click="toggleBucketVersioning">{{ bucketVersionStatus === 'Enabled' ? '暂停版本控制' : '开启版本控制' }}</button><button class="btn danger" @click="removeBucket">删除桶</button></div></div></div>
@@ -1039,6 +1073,8 @@ async function removeBucket() {
 .multipart-modal { width: min(760px, 94vw); }
 .presign-modal { width: min(680px, 94vw); }
 .presign-result { min-height: 130px; resize: vertical; font-family: ui-monospace, monospace; }
+.sync-modal { width: min(720px, 94vw); }
+.sync-items { max-height: 180px; overflow: auto; border-top: 1px solid var(--border); padding-top: 6px; font-size: 12px; }
 .multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
 .break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }

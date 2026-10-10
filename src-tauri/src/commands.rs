@@ -9,6 +9,7 @@ use easys3_core::plan::{collect_upload_files, item_matches_failure};
 use easys3_core::preview::PreviewData;
 use easys3_core::resume::{ResumePart, ResumeTask, ResumeUploadFile};
 use easys3_core::settings::{save_settings, TransferSettings};
+use easys3_core::sync::SyncPlan;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -520,6 +521,224 @@ pub async fn count_objects(
         .await
         .map_err(|e| e.to_string())?;
     Ok(keys.len() as u64)
+}
+
+#[tauri::command]
+pub async fn plan_sync_upload(
+    state: State<'_, App>,
+    bucket: String,
+    prefix: String,
+    local: String,
+    propagate: bool,
+) -> Result<easys3_core::sync::SyncPlan, String> {
+    let path = PathBuf::from(&local);
+    if !path.is_dir() {
+        return Err("本地同步目录不存在".to_string());
+    }
+    let (client, _) = state.current_control_client()?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let remote = easys3_core::list::collect_prefix_sizes(&client, &bucket, &prefix, &cancel)
+        .await
+        .map_err(|e| e.to_string())?;
+    easys3_core::sync::plan_upload(&path, &prefix, &remote, propagate)
+        .map_err(|e| format!("生成同步计划失败：{e}"))
+}
+
+#[tauri::command]
+pub async fn plan_sync_download(
+    state: State<'_, App>,
+    bucket: String,
+    prefix: String,
+    local: String,
+    propagate: bool,
+) -> Result<easys3_core::sync::SyncPlan, String> {
+    let path = PathBuf::from(&local);
+    if !path.is_dir() {
+        return Err("本地同步目录不存在".to_string());
+    }
+    let (client, _) = state.current_control_client()?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let remote = easys3_core::list::collect_prefix_sizes(&client, &bucket, &prefix, &cancel)
+        .await
+        .map_err(|e| e.to_string())?;
+    easys3_core::sync::plan_download(&path, &prefix, &remote, propagate)
+        .map_err(|e| format!("生成同步计划失败：{e}"))
+}
+
+#[tauri::command]
+pub fn start_sync_upload(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    plan: SyncPlan,
+) -> Result<Vec<String>, String> {
+    let files: Vec<(PathBuf, String)> = plan
+        .create
+        .iter()
+        .chain(plan.update.iter())
+        .map(|item| (PathBuf::from(&item.source), item.target.clone()))
+        .collect();
+    if files.is_empty() && plan.delete.is_empty() {
+        return Err("同步计划没有需要上传的文件".to_string());
+    }
+    if files.is_empty() {
+        let items = plan
+            .delete
+            .into_iter()
+            .map(|item| FsItem {
+                key: item.source,
+                is_dir: false,
+            })
+            .collect();
+        return Ok(vec![start_delete(state, app, bucket, items)?]);
+    }
+    let (client, _) = state.current_client()?;
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(
+        &id,
+        TaskKind::Upload,
+        &bucket,
+        files.len(),
+        tasks::upload_files_size(&files),
+    ));
+    let retry = Arc::new(Mutex::new(Some(RetryJob::Upload {
+        client: client.clone(),
+        bucket: bucket.clone(),
+        files: files.clone(),
+    })));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry,
+        },
+    );
+    tasks::spawn_upload(
+        app.clone(),
+        client,
+        bucket.clone(),
+        files,
+        cancel,
+        shared,
+        None,
+        state.transfer_settings(),
+        state.upload_throttle.clone(),
+        None,
+        None,
+        None,
+    );
+    // 删除传播作为独立 Delete 任务，沿用已有取消与精确重试语义。
+    let mut ids = vec![id];
+    if !plan.delete.is_empty() {
+        let items = plan
+            .delete
+            .into_iter()
+            .map(|item| FsItem {
+                key: item.source,
+                is_dir: false,
+            })
+            .collect();
+        ids.push(start_delete(state, app, bucket, items)?);
+    }
+    Ok(ids)
+}
+
+#[tauri::command]
+pub fn start_sync_download(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    plan: SyncPlan,
+) -> Result<Vec<String>, String> {
+    let jobs: Vec<tasks::DownloadJob> = plan
+        .create
+        .iter()
+        .chain(plan.update.iter())
+        .map(|item| tasks::DownloadJob {
+            key: item.source.clone(),
+            dest: PathBuf::from(&item.target),
+        })
+        .collect();
+    if jobs.is_empty() && plan.delete.is_empty() {
+        return Err("同步计划没有需要下载的文件".to_string());
+    }
+    if jobs.is_empty() {
+        return start_sync_local_deletes(state, app, bucket, plan.delete);
+    }
+    let (client, _) = state.current_client()?;
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(
+        &id,
+        TaskKind::Download,
+        &bucket,
+        jobs.len(),
+        0,
+    ));
+    let retry = Arc::new(Mutex::new(Some(RetryJob::SyncDownload {
+        client: client.clone(),
+        bucket: bucket.clone(),
+        jobs: jobs.clone(),
+    })));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry,
+        },
+    );
+    tasks::spawn_sync_download(
+        app.clone(),
+        client,
+        bucket.clone(),
+        jobs,
+        cancel,
+        shared,
+        state.transfer_settings(),
+        state.download_throttle.clone(),
+    );
+    let mut ids = vec![id];
+    if !plan.delete.is_empty() {
+        ids.extend(start_sync_local_deletes(state, app, bucket, plan.delete)?);
+    }
+    Ok(ids)
+}
+
+fn start_sync_local_deletes(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    items: Vec<easys3_core::sync::SyncPlanItem>,
+) -> Result<Vec<String>, String> {
+    let paths = items
+        .into_iter()
+        .map(|item| PathBuf::from(item.target))
+        .collect::<Vec<_>>();
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(
+        &id,
+        TaskKind::Delete,
+        &bucket,
+        paths.len(),
+        0,
+    ));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry: Arc::new(Mutex::new(Some(RetryJob::SyncLocalDelete {
+                bucket: bucket.clone(),
+                paths: paths.clone(),
+            }))),
+        },
+    );
+    tasks::spawn_sync_local_delete(app, paths, cancel, shared);
+    Ok(vec![id])
 }
 
 #[tauri::command]
@@ -1218,6 +1437,94 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 None,
                 None,
             );
+        }
+        Some(RetryJob::SyncDownload {
+            client,
+            bucket,
+            jobs,
+        }) => {
+            let subset: Vec<_> = jobs
+                .into_iter()
+                .filter(|job| failed.contains(&job.key))
+                .collect();
+            if subset.is_empty() {
+                return Err("没有可重试的失败项".to_string());
+            }
+            {
+                let mut gi = lock(&shared.info);
+                gi.status = TaskStatus::Running;
+                gi.files_total = subset.len();
+                gi.files_done = 0;
+                gi.files_failed = 0;
+                gi.files_skipped = 0;
+                gi.bytes_total = 0;
+                gi.bytes_done = 0;
+                gi.failures.clear();
+                gi.current_file = None;
+                gi.retry_count = 0;
+            }
+            let retry_slot = {
+                let mut inner = lock(&state.inner);
+                match inner.tasks.get_mut(&task_id) {
+                    Some(entry) => {
+                        entry.cancel = cancel.clone();
+                        entry.retry.clone()
+                    }
+                    None => Arc::new(Mutex::new(None)),
+                }
+            };
+            *lock(&retry_slot) = Some(RetryJob::SyncDownload {
+                client: client.clone(),
+                bucket: bucket.clone(),
+                jobs: subset.clone(),
+            });
+            tasks::spawn_sync_download(
+                app,
+                client,
+                bucket,
+                subset,
+                cancel,
+                shared,
+                state.transfer_settings(),
+                state.download_throttle.clone(),
+            );
+        }
+        Some(RetryJob::SyncLocalDelete { bucket, paths }) => {
+            let subset: Vec<_> = paths
+                .into_iter()
+                .filter(|path| failed.contains(&path.to_string_lossy().into_owned()))
+                .collect();
+            if subset.is_empty() {
+                return Err("没有可重试的失败项".to_string());
+            }
+            {
+                let mut gi = lock(&shared.info);
+                gi.status = TaskStatus::Running;
+                gi.files_total = subset.len();
+                gi.files_done = 0;
+                gi.files_failed = 0;
+                gi.files_skipped = 0;
+                gi.bytes_total = 0;
+                gi.bytes_done = 0;
+                gi.failures.clear();
+                gi.current_file = None;
+                gi.retry_count = 0;
+            }
+            let retry_slot = {
+                let mut inner = lock(&state.inner);
+                match inner.tasks.get_mut(&task_id) {
+                    Some(entry) => {
+                        entry.cancel = cancel.clone();
+                        entry.retry.clone()
+                    }
+                    None => Arc::new(Mutex::new(None)),
+                }
+            };
+            *lock(&retry_slot) = Some(RetryJob::SyncLocalDelete {
+                bucket,
+                paths: subset.clone(),
+            });
+            tasks::spawn_sync_local_delete(app, subset, cancel, shared);
         }
         Some(RetryJob::Download {
             client,

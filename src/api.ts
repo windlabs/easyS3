@@ -16,6 +16,7 @@ import type {
   ObjectTag,
   ObjectAclInfo,
   BucketVersioningInfo,
+  SyncPlan,
   ResumableTaskInfo,
 } from "./types";
 
@@ -39,6 +40,10 @@ export const listObjects = (bucket: string, prefix: string, token: string | null
   invoke<ListResult>("list_objects", { bucket, prefix, token });
 export const countObjects = (bucket: string, prefix: string) =>
   invoke<number>("count_objects", { bucket, prefix });
+export const planSyncUpload = (bucket: string, prefix: string, local: string, propagate: boolean) => invoke<SyncPlan>("plan_sync_upload", { bucket, prefix, local, propagate });
+export const planSyncDownload = (bucket: string, prefix: string, local: string, propagate: boolean) => invoke<SyncPlan>("plan_sync_download", { bucket, prefix, local, propagate });
+export const startSyncUpload = (bucket: string, plan: SyncPlan) => invoke<string[]>("start_sync_upload", { bucket, plan });
+export const startSyncDownload = (bucket: string, plan: SyncPlan) => invoke<string[]>("start_sync_download", { bucket, plan });
 export const previewObject = (bucket: string, key: string) =>
   invoke<PreviewData>("preview_object", { bucket, key });
 export const isDownloadDirectory = (dest: string) =>

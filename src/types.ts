@@ -55,6 +55,8 @@ export interface ObjectVersionInfo {
 export interface ObjectTag { key: string; value: string; }
 export interface ObjectAclInfo { owner: string | null; grants: string[]; }
 export interface BucketVersioningInfo { status: string; }
+export interface SyncPlanItem { source: string; target: string; action: string; size: number; }
+export interface SyncPlan { create: SyncPlanItem[]; update: SyncPlanItem[]; delete: SyncPlanItem[]; skipped: number; }
 
 export interface MultipartUploadInfo {
   key: string;

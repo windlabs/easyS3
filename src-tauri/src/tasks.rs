@@ -99,6 +99,69 @@ pub struct DownloadJob {
     pub dest: PathBuf,
 }
 
+/// P1-07 同步计划展开后的直接下载任务，目标路径由计划决定。
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_sync_download(
+    app: tauri::AppHandle,
+    client: aws_sdk_s3::Client,
+    bucket: String,
+    jobs: Vec<DownloadJob>,
+    cancel: Arc<AtomicBool>,
+    shared: Arc<TaskShared>,
+    settings: TransferSettings,
+    throttle: Arc<Throttle>,
+) {
+    let probe = shared.clone();
+    schedule(&probe, move || {
+        tauri::async_runtime::spawn(async move {
+            mark_running(&shared);
+            run_download_jobs(
+                &app,
+                &client,
+                &bucket,
+                jobs,
+                "overwrite",
+                &cancel,
+                &shared,
+                settings.auto_retry_count as usize,
+                &throttle,
+                true,
+            )
+            .await;
+        });
+    });
+}
+
+/// P1-07 同步删除本地文件，作为可取消任务显示在任务中心。
+pub fn spawn_sync_local_delete(
+    app: tauri::AppHandle,
+    paths: Vec<PathBuf>,
+    cancel: Arc<AtomicBool>,
+    shared: Arc<TaskShared>,
+) {
+    let probe = shared.clone();
+    schedule(&probe, move || {
+        tauri::async_runtime::spawn(async move {
+            mark_running(&shared);
+            for path in paths {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                let key = path.to_string_lossy().into_owned();
+                lock(&shared.info).current_file = Some(key.clone());
+                match tokio::fs::remove_file(&path).await {
+                    Ok(()) => lock(&shared.info).files_done += 1,
+                    Err(error) => {
+                        record_failure(&shared, &key, format!("删除本地文件失败：{error}"))
+                    }
+                }
+                emit_task(&app, &shared, false);
+            }
+            finish_task(&app, &cancel, &shared);
+        });
+    });
+}
+
 /// 桶内复制 / 移动的单个任务项
 #[derive(Debug, Clone)]
 pub struct CopyJob {
@@ -118,6 +181,16 @@ pub enum RetryJob {
         client: aws_sdk_s3::Client,
         bucket: String,
         files: Vec<(PathBuf, String)>,
+    },
+    /// P1-07 已展开的同步下载：保留精确目标路径，重试时不会重新规划或覆盖跳过项。
+    SyncDownload {
+        client: aws_sdk_s3::Client,
+        bucket: String,
+        jobs: Vec<DownloadJob>,
+    },
+    SyncLocalDelete {
+        bucket: String,
+        paths: Vec<PathBuf>,
     },
     Download {
         /// 传输客户端：对象体下载（不设超时，大文件合法地慢）

@@ -20,5 +20,6 @@ pub mod preview;
 pub mod resume;
 pub mod s3;
 pub mod settings;
+pub mod sync;
 pub mod throttle;
 pub mod upload;
