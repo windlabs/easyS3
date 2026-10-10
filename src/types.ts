@@ -101,7 +101,7 @@ export interface Failure {
   error: string;
 }
 
-export type TaskKind = "upload" | "download" | "delete" | "copy" | "search";
+export type TaskKind = "upload" | "download" | "delete" | "copy" | "search" | "zip";
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "canceled";
 
 export interface TaskInfo {

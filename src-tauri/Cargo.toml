@@ -25,6 +25,7 @@ aws-sdk-s3 = { workspace = true }
 aes-gcm = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
+zip = { workspace = true }
 base64 = "0.22"
 easys3-core = { path = "../crates/easys3-core" }
 

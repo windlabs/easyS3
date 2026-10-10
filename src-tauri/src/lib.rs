@@ -41,6 +41,7 @@ pub fn run() {
             commands::start_search,
             commands::start_sync_upload,
             commands::start_sync_download,
+            commands::start_zip_download,
             commands::preview_object,
             commands::is_download_directory,
             commands::presign_get,

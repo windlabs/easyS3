@@ -18,6 +18,7 @@ const kindLabel: Record<TaskInfo["kind"], string> = {
   delete: "删除",
   copy: "复制/移动",
   search: "搜索",
+  zip: "打包下载",
 };
 const statusLabel: Record<TaskInfo["status"], string> = {
   queued: "排队中",

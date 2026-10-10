@@ -284,6 +284,22 @@ function downloadSelection() {
   void requestDownload(selectionItems());
 }
 
+async function downloadZipSelection() {
+  const items = selectionItems();
+  if (!items.length) return;
+  const path = await (await import("@tauri-apps/plugin-dialog")).save({
+    title: "保存 ZIP 文件",
+    defaultPath: "easyS3-download.zip",
+    filters: [{ name: "ZIP", extensions: ["zip"] }],
+  });
+  if (!path) return;
+  try {
+    await api.startZipDownload(store.browse.bucket, items, path);
+    store.tasksStore.open = true;
+    store.toast("ZIP 打包下载任务已开始");
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
 async function confirmDownload(policy: ConflictPolicy) {
   showConflict.value = false;
   try {
@@ -774,6 +790,7 @@ async function removeBucket() {
           <button class="btn" :disabled="!store.selection.size" @click="downloadSelection">
             下载
           </button>
+          <button class="btn" :disabled="!store.selection.size" @click="downloadZipSelection">下载 ZIP</button>
           <button class="btn" :disabled="!store.selection.size" @click="openPresign('get')">分享链接</button>
           <button class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, false)">
             复制

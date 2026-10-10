@@ -938,6 +938,50 @@ pub fn start_sync_download(
     Ok(ids)
 }
 
+#[tauri::command]
+pub fn start_zip_download(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    items: Vec<FsItem>,
+    dest: String,
+) -> Result<String, String> {
+    if items.is_empty() {
+        return Err("请选择要打包的文件或文件夹".to_string());
+    }
+    let (client, _) = state.current_client()?;
+    let (control, _) = state.current_control_client()?;
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(
+        &id,
+        TaskKind::Zip,
+        &bucket,
+        items.len(),
+        0,
+    ));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry: Arc::new(Mutex::new(None)),
+        },
+    );
+    tasks::spawn_zip(
+        app,
+        client,
+        control,
+        bucket,
+        items,
+        PathBuf::from(dest),
+        cancel,
+        shared,
+        state.download_throttle.clone(),
+    );
+    Ok(id)
+}
+
 fn start_sync_local_deletes(
     state: State<App>,
     app: tauri::AppHandle,

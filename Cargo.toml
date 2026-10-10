@@ -18,6 +18,7 @@ keyring = "3"
 aes-gcm = "0.10"
 rand = "0.8"
 sha2 = "0.10"
+zip = "0.6"
 
 [profile.release]
 lto = true

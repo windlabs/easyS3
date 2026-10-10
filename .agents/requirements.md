@@ -115,6 +115,11 @@
 - 配置菜单提供连接导入/导出。默认导出脱敏配置；含凭据导出需明确勾选、二次确认与导出密码加密。
 - 导入时同名连接默认跳过，可选择覆盖；格式/版本/密码错误不影响既有连接。支持读取 AWS CLI profile（`~/.aws/credentials` 与 `~/.aws/config`）并确认导入。
 
+## P1-10 批量下载 ZIP（2026-10）
+
+- 已选文件或文件夹可下载为 ZIP；文件夹保留其相对目录结构，多选文件保留完整 Key 路径以避免同名冲突，目录占位对象不进入 ZIP。
+- ZIP 任务逐对象流式下载到短生命周期临时工作文件后立即写入 ZIP，不将整个对象或整个 ZIP 读入内存；可取消、显示进度，取消后删除未完成 ZIP。
+
 ## 分发与平台
 
 - 目标平台：**Windows、Linux、macOS 三端**（Windows NSIS、Linux AppImage + deb、macOS dmg，覆盖 Intel 与 Apple Silicon）。

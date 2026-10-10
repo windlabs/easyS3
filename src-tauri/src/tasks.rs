@@ -18,6 +18,7 @@ use easys3_core::upload::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -36,6 +37,7 @@ pub enum TaskKind {
     /// 桶内复制 / 移动 / 重命名（服务端 copy_object，规格 §6）
     Copy,
     Search,
+    Zip,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -207,6 +209,127 @@ pub fn spawn_search(
             }
             finish_task(&app, &cancel, &shared);
             let _ = app.emit("search-result", SearchResultEvent { id, results, error });
+        });
+    });
+}
+
+/// P1-10 批量下载 ZIP：对象体逐个流式落临时文件后立即写进 ZIP，绝不将整包置入内存。
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_zip(
+    app: tauri::AppHandle,
+    client: aws_sdk_s3::Client,
+    control: aws_sdk_s3::Client,
+    bucket: String,
+    items: Vec<FsItem>,
+    destination: PathBuf,
+    cancel: Arc<AtomicBool>,
+    shared: Arc<TaskShared>,
+    throttle: Arc<Throttle>,
+) {
+    let probe = shared.clone();
+    schedule(&probe, move || {
+        tauri::async_runtime::spawn(async move {
+            mark_running(&shared);
+            let mut jobs: Vec<(String, String)> = Vec::new();
+            for item in items {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                if item.is_dir {
+                    match collect_prefix_objects(&control, &bucket, &item.key, &cancel, false).await
+                    {
+                        Ok(keys) => jobs.extend(keys.into_iter().map(|key| {
+                            let relative = key.strip_prefix(&item.key).unwrap_or(&key).to_owned();
+                            (key, relative)
+                        })),
+                        Err(CoreError::Cancelled) => break,
+                        Err(error) => {
+                            record_failure(&shared, &item.key, format!("列出对象失败：{error}"))
+                        }
+                    }
+                } else {
+                    // 单文件保留完整 key 路径，避免多选不同目录的同名文件在 ZIP 中冲突。
+                    jobs.push((item.key.clone(), item.key.clone()));
+                }
+            }
+            lock(&shared.info).files_total = jobs.len() + lock(&shared.info).files_failed;
+            let temp_root =
+                std::env::temp_dir().join(format!("easys3-zip-{}", lock(&shared.info).id));
+            let _ = tokio::fs::create_dir_all(&temp_root).await;
+            let zip_file = match std::fs::File::create(&destination) {
+                Ok(file) => file,
+                Err(error) => {
+                    record_failure(
+                        &shared,
+                        &destination.to_string_lossy(),
+                        format!("创建 ZIP 失败：{error}"),
+                    );
+                    finish_task(&app, &cancel, &shared);
+                    return;
+                }
+            };
+            let mut writer = zip::ZipWriter::new(zip_file);
+            for (index, (key, relative)) in jobs.into_iter().enumerate() {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                lock(&shared.info).current_file = Some(key.clone());
+                let temporary = temp_root.join(format!("{index}.part"));
+                let progress = make_growing_progress(&app, &shared);
+                match download_object(
+                    &client,
+                    &bucket,
+                    &key,
+                    &temporary,
+                    progress,
+                    cancel.clone(),
+                    Some(throttle.clone()),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        let write_result = (|| -> Result<(), String> {
+                            writer
+                                .start_file(
+                                    relative.replace('\\', "/"),
+                                    zip::write::FileOptions::default(),
+                                )
+                                .map_err(|e| e.to_string())?;
+                            let mut input =
+                                std::fs::File::open(&temporary).map_err(|e| e.to_string())?;
+                            let mut buffer = [0u8; 256 * 1024];
+                            loop {
+                                let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
+                                if count == 0 {
+                                    break;
+                                }
+                                writer
+                                    .write_all(&buffer[..count])
+                                    .map_err(|e| e.to_string())?;
+                            }
+                            Ok(())
+                        })();
+                        let _ = tokio::fs::remove_file(&temporary).await;
+                        match write_result {
+                            Ok(()) => lock(&shared.info).files_done += 1,
+                            Err(error) => {
+                                record_failure(&shared, &key, format!("写入 ZIP 失败：{error}"))
+                            }
+                        }
+                    }
+                    Err(CoreError::Cancelled) => break,
+                    Err(error) => record_failure(&shared, &key, error.to_string()),
+                }
+                emit_task(&app, &shared, false);
+            }
+            if let Err(error) = writer.finish() {
+                record_failure(&shared, "ZIP", format!("完成 ZIP 失败：{error}"));
+            }
+            if cancel.load(Ordering::Relaxed) {
+                let _ = std::fs::remove_file(&destination);
+            }
+            let _ = std::fs::remove_dir_all(&temp_root);
+            finish_task(&app, &cancel, &shared);
         });
     });
 }
