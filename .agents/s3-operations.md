@@ -182,3 +182,7 @@
 
 - 任务终态记录本机时间、连接名、桶、操作类型、状态与失败摘要，持久化于应用配置目录 `history.json`；不得记录 Secret Key 或完整签名 URL。
 - 历史可按当前连接和时间范围查看、导出 JSON。历史只记录结果，不能恢复或重放任务；回收站/软删除作为二期独立能力。
+
+## 24. IaC 与 SDK 代码导出（P2-07）
+
+- 当前桶可导出不含凭据的 Terraform、CloudFormation 或 CDK 桶骨架；对象操作可生成 TypeScript / Python SDK 获取对象片段。所有导出均不包含 Access Key、Secret Key 或签名 URL。

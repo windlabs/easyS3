@@ -27,6 +27,8 @@ export const getState = () => invoke<StateDto>("get_state");
 export const getAudit = (connection: string | null, since: number | null) => invoke<import("./types").AuditEntry[]>("get_audit", { connection, since });
 export const exportAudit = (path: string, connection: string | null, since: number | null) => invoke<void>("export_audit", { path, connection, since });
 export const recordAudit = (bucket: string, action: string, status: string, detail: string) => invoke<void>("record_audit", { bucket, action, status, detail });
+export const generateIac = (bucket: string, format: string) => invoke<string>("generate_iac", { bucket, format });
+export const generateSdkSnippet = (bucket: string, key: string, language: string) => invoke<string>("generate_sdk_snippet", { bucket, key, language });
 export const openBrowserWindow = () => invoke<void>("open_browser_window");
 export const exportConnections = (path: string, secrets: boolean, password: string | null) => invoke<void>("export_connections", { path, secrets, password });
 export const importConnections = (path: string, overwrite: boolean, password: string | null) => invoke<number>("import_connections", { path, overwrite, password });

@@ -133,6 +133,35 @@ pub fn export_audit(
     )
     .map_err(|e| format!("导出操作历史失败：{e}"))
 }
+
+#[tauri::command]
+pub fn generate_iac(bucket: String, format: String) -> Result<String, String> {
+    if bucket.trim().is_empty() {
+        return Err("桶名不能为空".to_string());
+    }
+    match format.as_str() {
+        "terraform" => Ok(format!("resource \"aws_s3_bucket\" \"{}\" {{\n  bucket = \"{}\"\n}}\n", bucket.replace('-', "_"), bucket)),
+        "cloudformation" => Ok(format!("Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n    Properties:\n      BucketName: {bucket}\n")),
+        "cdk" => Ok(format!("new s3.Bucket(this, 'Bucket', {{ bucketName: '{bucket}' }});\n")),
+        _ => Err("导出格式仅支持 terraform、cloudformation、cdk".to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn generate_sdk_snippet(
+    bucket: String,
+    key: String,
+    language: String,
+) -> Result<String, String> {
+    if bucket.trim().is_empty() || key.trim().is_empty() {
+        return Err("桶名和对象 Key 不能为空".to_string());
+    }
+    match language.as_str() {
+        "typescript" => Ok(format!("import {{ S3Client, GetObjectCommand }} from '@aws-sdk/client-s3';\nconst client = new S3Client({{ region: 'YOUR_REGION' }});\nconst response = await client.send(new GetObjectCommand({{ Bucket: '{bucket}', Key: '{key}' }}));\n")),
+        "python" => Ok(format!("import boto3\ns3 = boto3.client('s3', region_name='YOUR_REGION')\nresponse = s3.get_object(Bucket='{bucket}', Key='{key}')\n")),
+        _ => Err("代码语言仅支持 typescript、python".to_string()),
+    }
+}
 #[tauri::command]
 pub fn record_audit(
     state: State<App>,

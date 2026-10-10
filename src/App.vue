@@ -100,6 +100,9 @@ const updateMessage = ref("");
 const showAudit = ref(false);
 const auditEntries = ref<AuditEntry[]>([]);
 const auditDays = ref(0);
+const showCodeExport = ref(false);
+const codeExportFormat = ref("terraform");
+const codeExportResult = ref("");
 const commandQuery = ref("");
 const isReadOnly = computed(() => !!store.currentConnection()?.read_only);
 
@@ -644,6 +647,8 @@ async function checkForUpdate() {
     if (update) { await update.downloadAndInstall(); }
   } catch (e) { updateMessage.value = `检查更新失败：${errorMessage(e)}`; }
 }
+async function generateCodeExport() { try { codeExportResult.value = await api.generateIac(store.browse.bucket, codeExportFormat.value); } catch (e) { store.toast(errorMessage(e), "error"); } }
+async function copyCodeExport() { try { await writeText(codeExportResult.value); store.toast("代码已复制"); } catch { store.toast("复制失败", "error"); } }
 async function loadAudit() { const since = auditDays.value ? Math.floor(Date.now()/1000) - auditDays.value * 86400 : null; try { auditEntries.value = await api.getAudit(store.app.currentConnectionId, since); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function exportAudit() { const path = await (await import("@tauri-apps/plugin-dialog")).save({ title: "导出操作历史", defaultPath: "easys3-history.json" }); if (!path) return; try { const since = auditDays.value ? Math.floor(Date.now()/1000) - auditDays.value * 86400 : null; await api.exportAudit(path, store.app.currentConnectionId, since); store.toast("操作历史已导出"); } catch (e) { store.toast(errorMessage(e), "error"); } }
 
@@ -864,6 +869,7 @@ async function removeBucket() {
               <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
               <button class="btn" @click="openMultipartDialog">碎片管理</button>
               <button class="btn" @click="showUsage = true; loadUsage()">统计</button>
+              <button class="btn" @click="showCodeExport = true; generateCodeExport()">导出 IaC</button>
               <button class="btn" @click="openPresign('put')">生成上传链接</button>
           </template>
           <span v-if="store.selection.size" class="selected-count">
@@ -990,6 +996,7 @@ async function removeBucket() {
     <div v-if="showUsage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶 / 前缀用量统计</div><div class="modal-body"><p class="warn-text">大桶统计会产生较多列表请求，可能耗时较长。</p><p v-if="usageLoading">正在递归扫描…</p><template v-else-if="usageStats"><p>对象数：<b>{{ usageStats.object_count }}</b></p><p>总大小：<b>{{ formatBytes(usageStats.total_bytes) }}</b></p></template></div><div class="modal-foot"><button class="btn" @click="showUsage = false">关闭</button><button class="btn" :disabled="usageLoading" @click="loadUsage">重新统计</button><button class="btn primary" :disabled="!usageStats" @click="exportUsage">导出 JSON</button></div></div></div>
     <div v-if="updateMessage" class="update-toast" @click="updateMessage = ''">{{ updateMessage }}</div>
     <div v-if="showAudit" class="modal-mask"><div class="modal audit-modal"><div class="modal-head">本机操作历史</div><div class="modal-body copy-form"><label>时间范围 <select v-model.number="auditDays" class="select" @change="loadAudit"><option :value="0">全部</option><option :value="1">最近 1 天</option><option :value="7">最近 7 天</option><option :value="30">最近 30 天</option></select></label><div class="audit-list"><div v-for="entry in auditEntries" :key="`${entry.at}-${entry.action}-${entry.detail}`" class="audit-row"><span>{{ new Date(entry.at * 1000).toLocaleString() }}</span><span>{{ entry.connection }} / {{ entry.bucket }}</span><span>{{ entry.action }} · {{ entry.status }}</span><span>{{ entry.detail || '—' }}</span></div><p v-if="!auditEntries.length" class="muted">暂无符合条件的历史记录。</p></div></div><div class="modal-foot"><button class="btn" @click="showAudit = false">关闭</button><button class="btn primary" @click="exportAudit">导出 JSON</button></div></div></div>
+    <div v-if="showCodeExport" class="modal-mask"><div class="modal small-modal"><div class="modal-head">导出桶 IaC</div><div class="modal-body copy-form"><label>格式 <select v-model="codeExportFormat" class="select" @change="generateCodeExport"><option value="terraform">Terraform</option><option value="cloudformation">CloudFormation</option><option value="cdk">CDK</option></select></label><textarea class="input code-export" readonly :value="codeExportResult" /></div><div class="modal-foot"><button class="btn" @click="showCodeExport = false">关闭</button><button class="btn primary" @click="copyCodeExport">复制</button></div></div></div>
     <div v-if="showCommandPalette" class="modal-mask"><div class="modal command-modal"><div class="modal-head">命令面板 <span class="muted">Ctrl/Cmd+K</span></div><div class="modal-body copy-form"><input v-model="commandQuery" class="input" autofocus placeholder="输入命令名称…" /><button v-for="command in commands" :key="command.label" class="command-row" @click="command.run(); showCommandPalette = false"><span>{{ command.label }}</span><kbd>{{ command.key }}</kbd></button><p class="copy-hint">快捷键：Ctrl/Cmd+R 刷新、Ctrl/Cmd+U 上传、Ctrl/Cmd+F 搜索、Ctrl/Cmd+K 命令面板。</p></div><div class="modal-foot"><button class="btn" @click="showCommandPalette = false">关闭</button></div></div></div>
     <div v-if="showConnectionTransfer" class="modal-mask"><div class="modal transfer-modal"><div class="modal-head">导入 / 导出连接</div><div class="modal-body copy-form"><section><b>导出</b><label><input v-model="includeExportSecrets" type="checkbox" /> 包含凭据（默认脱敏，需妥善保管）</label><input v-if="includeExportSecrets" v-model="connectionTransferPassword" class="input" type="password" placeholder="含凭据导出密码（必填）" /><button class="btn" @click="exportConnectionConfig">导出到文件…</button></section><section><b>导入配置文件</b><input v-model="connectionTransferPassword" class="input" type="password" placeholder="如导入文件加密，请输入密码" /><label><input v-model="importOverwrite" type="checkbox" /> 同名连接覆盖（否则跳过）</label><button class="btn" @click="importConnectionConfig">选择文件导入…</button></section><section><b>AWS CLI profile</b><button class="btn" @click="loadAwsProfiles">读取 ~/.aws/credentials</button><div v-if="awsProfiles.length" class="aws-profiles"><div v-for="profile in awsProfiles" :key="profile.id">{{ profile.name }} · {{ profile.region }}</div><button class="btn primary" @click="saveAwsProfiles">导入全部 profile</button></div></section></div><div class="modal-foot"><button class="btn primary" @click="showConnectionTransfer = false">关闭</button></div></div></div>
 
@@ -1262,6 +1269,7 @@ kbd { color: var(--muted); font-size: 11px; }
 .audit-list { max-height: 360px; overflow: auto; }
 .audit-row { display: grid; grid-template-columns: 160px 160px 130px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 .audit-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-export { min-height: 180px; font-family: ui-monospace, monospace; }
 .multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
 .break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }
