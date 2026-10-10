@@ -761,6 +761,7 @@ pub fn start_copy(
     bucket: String,
     items: Vec<FsItem>,
     target_prefix: String,
+    target_bucket: String,
     conflict: String,
     new_name: Option<String>,
     remove: bool,
@@ -769,6 +770,9 @@ pub fn start_copy(
         if name.is_empty() || name.contains('/') {
             return Err("新名称不能为空且不能包含 /".to_string());
         }
+    }
+    if target_bucket.trim().is_empty() {
+        return Err("目标桶不能为空".to_string());
     }
     if !target_prefix.is_empty() && !target_prefix.ends_with('/') {
         return Err("目标前缀必须以 / 结尾（或为空表示桶根）".to_string());
@@ -800,6 +804,7 @@ pub fn start_copy(
         app,
         client,
         bucket,
+        target_bucket,
         items,
         target_prefix,
         conflict,
@@ -1325,6 +1330,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
         Some(RetryJob::Copy {
             client,
             bucket,
+            target_bucket,
             items,
             target_prefix,
             new_name,
@@ -1368,6 +1374,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 app,
                 client,
                 bucket,
+                target_bucket,
                 subset,
                 target_prefix,
                 conflict,

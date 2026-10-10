@@ -391,7 +391,8 @@ pub enum CopyOutcome {
 /// - `remove_source`：复制成功后删除源对象（移动 / 重命名语义）。
 pub async fn copy_object(
     client: &Client,
-    bucket: &str,
+    source_bucket: &str,
+    target_bucket: &str,
     source_key: &str,
     target_key: &str,
     remove_source: bool,
@@ -406,7 +407,7 @@ pub async fn copy_object(
     // 大小前置检查：>5GB 的 copy_object 会被服务端拒绝，提前给出明确提示
     let head = client
         .head_object()
-        .bucket(bucket)
+        .bucket(source_bucket)
         .key(source_key)
         .send()
         .await
@@ -419,7 +420,7 @@ pub async fn copy_object(
     if skip_if_exists {
         match client
             .head_object()
-            .bucket(bucket)
+            .bucket(target_bucket)
             .key(target_key)
             .send()
             .await
@@ -436,16 +437,16 @@ pub async fn copy_object(
     }
     client
         .copy_object()
-        .bucket(bucket)
+        .bucket(target_bucket)
         .key(target_key)
-        .copy_source(copy_source(bucket, source_key))
+        .copy_source(copy_source(source_bucket, source_key))
         .send()
         .await
         .map_err(|e| classify(&e))?;
     if remove_source {
         client
             .delete_object()
-            .bucket(bucket)
+            .bucket(source_bucket)
             .key(source_key)
             .send()
             .await

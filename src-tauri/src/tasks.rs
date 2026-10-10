@@ -104,6 +104,7 @@ pub struct DownloadJob {
 pub struct CopyJob {
     pub source: String,
     pub target: String,
+    pub target_bucket: String,
     /// true = 移动（复制成功后删除源对象）
     pub is_move: bool,
 }
@@ -137,6 +138,7 @@ pub enum RetryJob {
     Copy {
         client: aws_sdk_s3::Client,
         bucket: String,
+        target_bucket: String,
         items: Vec<FsItem>,
         target_prefix: String,
         /// 单对象重命名（仅 items 为单个文件时有效）
@@ -796,6 +798,7 @@ pub fn spawn_copy(
     app: tauri::AppHandle,
     client: aws_sdk_s3::Client,
     bucket: String,
+    target_bucket: String,
     items: Vec<FsItem>,
     target_prefix: String,
     conflict: String,
@@ -834,6 +837,7 @@ pub fn spawn_copy(
                             for k in keys {
                                 jobs.push(CopyJob {
                                     target: copy_target(&target_prefix, Some(&prefix), &k),
+                                    target_bucket: target_bucket.clone(),
                                     source: k,
                                     is_move: remove,
                                 });
@@ -850,6 +854,7 @@ pub fn spawn_copy(
                     jobs.push(CopyJob {
                         source: item.key.clone(),
                         target,
+                        target_bucket: target_bucket.clone(),
                         is_move: remove,
                     });
                 }
@@ -865,6 +870,7 @@ pub fn spawn_copy(
             *lock(&retry_slot) = Some(RetryJob::Copy {
                 client: client.clone(),
                 bucket: bucket.clone(),
+                target_bucket: target_bucket.clone(),
                 items: items_for_retry,
                 target_prefix: target_prefix.clone(),
                 new_name,
@@ -911,6 +917,7 @@ async fn run_copy_jobs(
             result = easys3_core::object::copy_object(
                 client,
                 bucket,
+                &job.target_bucket,
                 &job.source,
                 &job.target,
                 job.is_move,

@@ -355,6 +355,7 @@ const copyRemove = ref(false);
 /** null = 多选工具栏入口；Some(entry) = 行按钮单对象入口 */
 const copySingleEntry = ref<Entry | null>(null);
 const copyTargetPrefix = ref("");
+const copyTargetBucket = ref("");
 const copyNewName = ref("");
 const copyConflict = ref<"overwrite" | "skip">("overwrite");
 
@@ -364,6 +365,7 @@ function openCopyDialog(entry: Entry | null, remove: boolean) {
   copySingleEntry.value = entry;
   copyRemove.value = remove;
   copyTargetPrefix.value = store.browse.prefix;
+  copyTargetBucket.value = store.browse.bucket;
   copyNewName.value = entry && !entry.is_dir ? entry.name : "";
   copyConflict.value = "overwrite";
   showCopyDialog.value = true;
@@ -398,7 +400,7 @@ async function startCopyTask() {
   }
   let prefix = copyTargetPrefix.value.trim();
   if (prefix && !prefix.endsWith("/")) prefix += "/";
-  if (prefix === store.browse.prefix && !newName && !entry?.is_dir) {
+  if (copyTargetBucket.value === store.browse.bucket && prefix === store.browse.prefix && !newName && !entry?.is_dir) {
     store.toast("目标位置与当前位置相同", "error");
     return;
   }
@@ -407,6 +409,7 @@ async function startCopyTask() {
       store.browse.bucket,
       items,
       prefix,
+      copyTargetBucket.value,
       copyConflict.value,
       newName,
       copyRemove.value,
@@ -823,6 +826,10 @@ async function removeBucket() {
       <div class="modal small-modal">
         <div class="modal-head">{{ copyDialogLabel }}</div>
         <div class="modal-body copy-form">
+          <label class="copy-row">
+            <span class="copy-label">目标桶</span>
+            <select v-model="copyTargetBucket" class="select"><option v-for="bucket in store.browse.buckets" :key="bucket" :value="bucket">{{ bucket }}</option><option v-if="!store.browse.buckets.includes(store.browse.bucket)" :value="store.browse.bucket">{{ store.browse.bucket }}</option></select>
+          </label>
           <label class="copy-row">
             <span class="copy-label">目标前缀</span>
             <input v-model="copyTargetPrefix" class="input" :placeholder="store.browse.prefix || '桶根（空）'" @keyup.enter="startCopyTask" />
