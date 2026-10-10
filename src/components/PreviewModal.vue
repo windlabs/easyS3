@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import type { PreviewData } from "../types";
 import { useMaskClose } from "./useMaskClose";
 
@@ -9,7 +9,11 @@ const props = defineProps<{
   data: PreviewData | null;
 }>();
 
-const emit = defineEmits<{ "update:modelValue": [v: boolean] }>();
+const emit = defineEmits<{ "update:modelValue": [v: boolean]; saveText: [content: string] }>();
+const editMode = ref(false);
+const editContent = ref("");
+const textEditable = computed(() => props.data?.kind === "text" && props.data.content.length <= 1024 * 1024);
+watch(() => props.data, (data) => { editMode.value = false; editContent.value = data?.kind === "text" ? data.content : ""; });
 
 const { onMousedown, onClick } = useMaskClose(() =>
   emit("update:modelValue", false),
@@ -154,6 +158,7 @@ const mdBlocks = computed(() =>
     <div class="modal preview-modal">
       <div class="modal-head preview-head">
         <span class="name" :title="name">{{ name }}</span>
+        <button v-if="textEditable" class="btn ghost sm" @click="editMode = !editMode">{{ editMode ? "预览" : "编辑" }}</button>
         <button class="btn ghost sm" @click="emit('update:modelValue', false)">
           关闭
         </button>
@@ -169,6 +174,7 @@ const mdBlocks = computed(() =>
         <video v-else-if="isVideo" :src="dataUrl" controls />
         <audio v-else-if="isAudio" :src="dataUrl" controls />
 
+        <textarea v-if="editMode" v-model="editContent" class="text-editor" />
         <!-- Markdown 只读视图（无 HTML 渲染） -->
         <div v-else-if="mdBlocks.length" class="md-view">
           <template v-for="(block, i) in mdBlocks" :key="i">
@@ -187,6 +193,7 @@ const mdBlocks = computed(() =>
         <pre v-else-if="data?.kind === 'text'" class="code-view"><span v-for="(tokens, i) in codeRenderLines" :key="i" class="code-line"><span v-for="(t, j) in tokens" :key="j" :class="t.cls">{{ t.text }}</span>
 </span><span v-if="codeTruncated" class="truncated-tip">… 内容过长，仅显示前 {{ MAX_RENDER_LINES }} 行，请下载查看完整内容</span></pre>
       </div>
+      <div v-if="editMode" class="modal-foot"><button class="btn" @click="editMode = false">取消</button><button class="btn primary" @click="emit('saveText', editContent)">保存并覆盖</button></div>
     </div>
   </div>
 </template>
@@ -230,6 +237,7 @@ const mdBlocks = computed(() =>
 .preview-body audio {
   width: 80%;
 }
+.text-editor { width: 100%; min-height: 60vh; resize: vertical; font: 13px/1.5 "JetBrains Mono", Consolas, monospace; }
 .code-view,
 .md-view {
   align-self: stretch;

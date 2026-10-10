@@ -1343,6 +1343,20 @@ pub async fn replace_object_metadata(
 }
 
 #[tauri::command]
+pub async fn save_text_object(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    content: String,
+) -> Result<(), String> {
+    require_writable(&state)?;
+    let (client, _) = state.current_client()?;
+    easys3_core::object::put_text_object(&client, &bucket, &key, content)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn create_folder(
     state: State<'_, App>,
     bucket: String,
@@ -1499,6 +1513,32 @@ pub fn plan_upload(paths: Vec<String>, prefix: String) -> Result<UploadPlan, Str
         skipped: 0,
         empty_folders: easys3_core::plan::collect_empty_folders(&path_bufs, &prefix),
     })
+}
+
+#[tauri::command]
+pub fn paste_clipboard_image() -> Result<Option<String>, String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|_| "无法读取剪贴板".to_string())?;
+    let image = match clipboard.get_image() {
+        Ok(image) => image,
+        Err(_) => return Ok(None),
+    };
+    let dir = std::env::temp_dir().join("easys3-paste");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建剪贴板临时目录失败：{e}"))?;
+    let path = dir.join(format!(
+        "paste-{}.png",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+    let mut file = std::fs::File::create(&path).map_err(|e| format!("保存剪贴板图片失败：{e}"))?;
+    let image_buffer = image::RgbaImage::from_raw(
+        image.width as u32,
+        image.height as u32,
+        image.bytes.into_owned(),
+    )
+    .ok_or("剪贴板图片格式无效")?;
+    image_buffer
+        .write_to(&mut file, image::ImageFormat::Png)
+        .map_err(|e| format!("编码剪贴板图片失败：{e}"))?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]

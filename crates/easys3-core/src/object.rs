@@ -394,6 +394,27 @@ pub async fn create_folder(
     Ok(())
 }
 
+pub async fn put_text_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    content: String,
+) -> Result<(), CoreError> {
+    if content.len() > 1024 * 1024 {
+        return Err(CoreError::Other("文本内容超过 1MB 编辑上限".into()));
+    }
+    client
+        .put_object()
+        .bucket(bucket)
+        .key(key)
+        .body(ByteStream::from(content.into_bytes()))
+        .content_type("text/plain; charset=utf-8")
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
 pub async fn create_empty_folders(
     client: &Client,
     bucket: &str,

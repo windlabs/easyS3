@@ -203,10 +203,15 @@ function onGlobalKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r") { event.preventDefault(); void store.refresh(); }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "u") { event.preventDefault(); if (!isReadOnly.value) void pickUpload(false); }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") { event.preventDefault(); showSearch.value = true; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { void pasteUpload(); }
   if (event.key === "Escape") showCommandPalette.value = false;
 }
 onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
+async function pasteUpload() {
+  if (isReadOnly.value || store.browse.mode !== "objects") return;
+  try { const path = await api.pasteClipboardImage(); if (path) await beginUpload([path]); } catch { /* 非图片剪贴板静默忽略 */ }
+}
 
 const commands = computed(() => [
   { label: "刷新", key: "Ctrl/Cmd+R", run: () => void store.refresh() },
@@ -416,6 +421,11 @@ async function preview(entry: Entry) {
   } catch (e) {
     store.toast(errorMessage(e), "error");
   }
+}
+async function savePreviewText(content: string) {
+  if (!previewName.value || !confirm("将覆盖远端对象，他人此间的修改会被覆盖。是否继续？")) return;
+  try { await api.saveTextObject(store.browse.bucket, store.browse.prefix + previewName.value, content); previewData.value = { kind: "text", content }; await store.refresh(); store.toast("文本已保存"); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
 }
 
 async function detail(entry: Entry) {
@@ -967,7 +977,7 @@ async function removeBucket() {
       @choose="confirmDownload"
     />
 
-    <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
+    <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" @save-text="savePreviewText" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
     <div v-if="showUsage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶 / 前缀用量统计</div><div class="modal-body"><p class="warn-text">大桶统计会产生较多列表请求，可能耗时较长。</p><p v-if="usageLoading">正在递归扫描…</p><template v-else-if="usageStats"><p>对象数：<b>{{ usageStats.object_count }}</b></p><p>总大小：<b>{{ formatBytes(usageStats.total_bytes) }}</b></p></template></div><div class="modal-foot"><button class="btn" @click="showUsage = false">关闭</button><button class="btn" :disabled="usageLoading" @click="loadUsage">重新统计</button><button class="btn primary" :disabled="!usageStats" @click="exportUsage">导出 JSON</button></div></div></div>

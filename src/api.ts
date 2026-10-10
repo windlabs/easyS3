@@ -71,6 +71,7 @@ export const restoreArchivedObject = (bucket: string, key: string, days: number,
 export const objectVersions = (bucket: string, key: string) => invoke<ObjectVersionInfo[]>("object_versions", { bucket, key });
 export const restoreObjectVersion = (bucket: string, key: string, version: string) => invoke<void>("restore_object_version", { bucket, key, version });
 export const replaceObjectMetadata = (bucket: string, key: string, contentType: string, metadata: ObjectTag[]) => invoke<void>("replace_object_metadata", { bucket, key, content_type: contentType, metadata });
+export const saveTextObject = (bucket: string, key: string, content: string) => invoke<void>("save_text_object", { bucket, key, content });
 export const objectTags = (bucket: string, key: string) => invoke<ObjectTag[]>("object_tags", { bucket, key });
 export const saveObjectTags = (bucket: string, key: string, tags: ObjectTag[]) => invoke<void>("save_object_tags", { bucket, key, tags });
 export const objectAcl = (bucket: string, key: string) => invoke<ObjectAclInfo>("object_acl", { bucket, key });
@@ -105,6 +106,7 @@ export const listMultipartParts = (bucket: string, key: string, uploadId: string
 
 export const planUpload = (paths: string[], prefix: string) =>
   invoke<UploadPlan>("plan_upload", { paths, prefix });
+export const pasteClipboardImage = () => invoke<string | null>("paste_clipboard_image");
 export const planUploadChanges = (bucket: string, paths: string[], prefix: string) =>
   invoke<UploadPlan>("plan_upload_changes", { bucket, paths, prefix });
 export const startUpload = (bucket: string, prefix: string, paths: string[], storage: string | null, verify: boolean) =>
