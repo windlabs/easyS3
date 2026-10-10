@@ -5,15 +5,18 @@
 //! 任务中心手动重试以原参数重新开始失败文件，不重复执行已成功对象。
 
 use easys3_core::delete::delete_keys;
-use easys3_core::download::download_object;
+use easys3_core::download::{download_object, download_object_resumable};
 use easys3_core::error::CoreError;
 use easys3_core::list::collect_prefix_objects;
 use easys3_core::plan::{key_matches_failure, unique_path};
 use easys3_core::settings::TransferSettings;
 use easys3_core::throttle::Throttle;
-use easys3_core::upload::{upload_file, ProgressFn, UploadOptions};
+use easys3_core::upload::{
+    upload_file, upload_file_resumable, CheckpointFn, MultipartCheckpoint, ProgressFn,
+    UploadOptions,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -149,6 +152,9 @@ pub struct TaskEntry {
     pub shared: Arc<TaskShared>,
     pub retry: Arc<Mutex<Option<RetryJob>>>,
 }
+
+type CheckpointSink = Arc<dyn Fn(&str, MultipartCheckpoint) + Send + Sync>;
+type CompletionSink = Arc<dyn Fn() + Send + Sync>;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -382,6 +388,9 @@ pub fn spawn_upload(
     storage_class: Option<aws_sdk_s3::types::StorageClass>,
     settings: TransferSettings,
     throttle: Arc<Throttle>,
+    checkpoints: Option<CheckpointSink>,
+    resume_checkpoints: Option<Arc<HashMap<String, MultipartCheckpoint>>>,
+    completed: Option<CompletionSink>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -404,6 +413,8 @@ pub fn spawn_upload(
                 };
                 // 瞬时错误自动重试次数（设置页可配，默认 3；0 = 关闭）
                 let auto_retries = settings.auto_retry_count as usize;
+                let checkpoints = checkpoints.clone();
+                let resume_checkpoints = resume_checkpoints.clone();
                 workers.push(tauri::async_runtime::spawn(async move {
                     loop {
                         if c.load(Ordering::Relaxed) {
@@ -415,16 +426,42 @@ pub fn spawn_upload(
                         let progress = make_delta_progress(&ah, &s);
                         let mut result = Err(CoreError::Other("上传未执行".into()));
                         for attempt in 0..=auto_retries {
-                            result = upload_file(
-                                &cl,
-                                &b,
-                                &key,
-                                &path,
-                                progress.clone(),
-                                c.clone(),
-                                opts.clone(),
-                            )
-                            .await;
+                            let checkpoint = resume_checkpoints
+                                .as_ref()
+                                .and_then(|saved| saved.get(&key).cloned())
+                                .or_else(|| {
+                                    checkpoints.as_ref().map(|_| MultipartCheckpoint::default())
+                                });
+                            let changed: Option<CheckpointFn> = checkpoints.as_ref().map(|all| {
+                                let all = all.clone();
+                                let item_key = key.clone();
+                                Arc::new(move |value| all(&item_key, value)) as CheckpointFn
+                            });
+                            result = if changed.is_some() {
+                                upload_file_resumable(
+                                    &cl,
+                                    &b,
+                                    &key,
+                                    &path,
+                                    progress.clone(),
+                                    c.clone(),
+                                    opts.clone(),
+                                    checkpoint,
+                                    changed,
+                                )
+                                .await
+                            } else {
+                                upload_file(
+                                    &cl,
+                                    &b,
+                                    &key,
+                                    &path,
+                                    progress.clone(),
+                                    c.clone(),
+                                    opts.clone(),
+                                )
+                                .await
+                            };
                             if result.is_ok()
                                 || !result.as_ref().err().is_some_and(CoreError::is_retryable)
                                 || attempt == auto_retries
@@ -450,6 +487,11 @@ pub fn spawn_upload(
                 let _ = w.await;
             }
             finish_task(&app, &cancel, &shared);
+            if matches!(lock(&shared.info).status, TaskStatus::Done) {
+                if let Some(callback) = completed {
+                    callback();
+                }
+            }
         });
     });
 }
@@ -474,6 +516,8 @@ pub fn spawn_download_expand(
     retry_slot: Arc<Mutex<Option<RetryJob>>>,
     settings: TransferSettings,
     throttle: Arc<Throttle>,
+    resumable: bool,
+    completed: Option<CompletionSink>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -540,10 +584,21 @@ pub fn spawn_download_expand(
                     &shared,
                     settings.auto_retry_count as usize,
                     &throttle,
+                    resumable,
                 )
                 .await;
+                if matches!(lock(&shared.info).status, TaskStatus::Done) {
+                    if let Some(callback) = completed {
+                        callback();
+                    }
+                }
             } else {
                 finish_task(&app, &cancel, &shared);
+                if matches!(lock(&shared.info).status, TaskStatus::Done) {
+                    if let Some(callback) = completed {
+                        callback();
+                    }
+                }
             }
         });
     });
@@ -560,6 +615,7 @@ async fn run_download_jobs(
     shared: &Arc<TaskShared>,
     auto_retries: usize,
     throttle: &Arc<Throttle>,
+    resumable: bool,
 ) {
     for job in jobs {
         if cancel.load(Ordering::Relaxed) {
@@ -581,16 +637,30 @@ async fn run_download_jobs(
         let progress = make_growing_progress(app, shared);
         let mut result = Err(CoreError::Other("下载未执行".into()));
         for attempt in 0..=auto_retries {
-            result = download_object(
-                client,
-                bucket,
-                &job.key,
-                &dest,
-                progress.clone(),
-                cancel.clone(),
-                Some(throttle.clone()),
-            )
-            .await;
+            result = if resumable {
+                download_object_resumable(
+                    client,
+                    bucket,
+                    &job.key,
+                    &dest,
+                    progress.clone(),
+                    cancel.clone(),
+                    Some(throttle.clone()),
+                    true,
+                )
+                .await
+            } else {
+                download_object(
+                    client,
+                    bucket,
+                    &job.key,
+                    &dest,
+                    progress.clone(),
+                    cancel.clone(),
+                    Some(throttle.clone()),
+                )
+                .await
+            };
             if result.is_ok()
                 || !result.as_ref().err().is_some_and(CoreError::is_retryable)
                 || attempt == auto_retries

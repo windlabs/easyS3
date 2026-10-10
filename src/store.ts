@@ -1,7 +1,7 @@
 import { reactive } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import * as api from "./api";
-import type { Entry, ConnectionConfig, TaskInfo } from "./types";
+import type { Entry, ConnectionConfig, TaskInfo, ResumableTaskInfo } from "./types";
 import { errorMessage } from "./utils";
 
 // ---------- 全局应用状态 ----------
@@ -40,6 +40,7 @@ export const tasksStore = reactive({
   tasks: [] as TaskInfo[],
   open: false,
   hovered: false,
+  resumable: [] as ResumableTaskInfo[],
 });
 
 // 全部任务成功结束后，任务中心自动收起的延时（毫秒）
@@ -209,6 +210,7 @@ export async function refresh() {
 
 export async function initTasks() {
   tasksStore.tasks = await api.getTasks();
+  tasksStore.resumable = await api.getResumableTasks();
   maybeScheduleTasksAutoClose();
   await listen<TaskInfo>("task-update", (ev) => {
     const t = ev.payload;
@@ -231,6 +233,25 @@ export async function initTasks() {
     }
     maybeScheduleTasksAutoClose();
   });
+}
+
+export async function discardResumableTask(id: string) {
+  try {
+    await api.discardResumableTask(id);
+    tasksStore.resumable = tasksStore.resumable.filter((task) => task.id !== id);
+  } catch (e) {
+    toast(errorMessage(e), "error");
+  }
+}
+
+export async function resumeTask(id: string) {
+  try {
+    await api.resumeTask(id);
+    tasksStore.resumable = tasksStore.resumable.filter((task) => task.id !== id);
+    tasksStore.open = true;
+  } catch (e) {
+    toast(errorMessage(e), "error");
+  }
 }
 
 export async function cancelTask(id: string) {

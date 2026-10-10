@@ -7,6 +7,7 @@ use easys3_core::config::{connection_fields_changed, validate_connection, Connec
 use easys3_core::list::ListResult;
 use easys3_core::plan::{collect_upload_files, item_matches_failure};
 use easys3_core::preview::PreviewData;
+use easys3_core::resume::{ResumePart, ResumeTask, ResumeUploadFile};
 use easys3_core::settings::{save_settings, TransferSettings};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -22,6 +23,15 @@ pub struct StateDto {
     pub current_connection_id: Option<String>,
 }
 
+/// P1-01：应用重启后由 `transfers.json` 恢复的任务摘要，不含本地路径和凭据。
+#[derive(Serialize)]
+pub struct ResumableTaskInfo {
+    pub id: String,
+    pub kind: String,
+    pub bucket: String,
+    pub created_at: u64,
+}
+
 #[tauri::command]
 pub fn get_state(state: State<App>) -> StateDto {
     let inner = lock(&state.inner);
@@ -33,6 +43,293 @@ pub fn get_state(state: State<App>) -> StateDto {
         connections,
         current_connection_id: inner.file.current_connection_id.clone(),
     }
+}
+
+#[tauri::command]
+pub fn get_resumable_tasks(state: State<App>) -> Vec<ResumableTaskInfo> {
+    lock(&state.resume)
+        .tasks
+        .iter()
+        .map(|task| match task {
+            ResumeTask::Upload {
+                id,
+                bucket,
+                created_at,
+                ..
+            } => ResumableTaskInfo {
+                id: id.clone(),
+                kind: "upload".to_string(),
+                bucket: bucket.clone(),
+                created_at: *created_at,
+            },
+            ResumeTask::Download {
+                id,
+                bucket,
+                created_at,
+                ..
+            } => ResumableTaskInfo {
+                id: id.clone(),
+                kind: "download".to_string(),
+                bucket: bucket.clone(),
+                created_at: *created_at,
+            },
+        })
+        .collect()
+}
+
+/// 放弃恢复任务只清理本地检查点。上传残片由碎片管理统一提供二次确认清理，
+/// 避免在当前连接已切换或删除时对错误的服务端对象发起请求。
+#[tauri::command]
+pub async fn discard_resumable_task(state: State<'_, App>, id: String) -> Result<(), String> {
+    let task = lock(&state.resume)
+        .tasks
+        .iter()
+        .find(|task| match task {
+            ResumeTask::Upload { id: task_id, .. } | ResumeTask::Download { id: task_id, .. } => {
+                task_id == &id
+            }
+        })
+        .cloned()
+        .ok_or("可恢复任务不存在")?;
+    if let ResumeTask::Upload {
+        connection_id,
+        bucket,
+        files,
+        ..
+    } = task
+    {
+        let connection = state.connection_by_id(&connection_id)?;
+        let client = state.client_for_connection(&connection)?;
+        for file in files {
+            if let Some(upload_id) = file.upload_id.filter(|value| !value.is_empty()) {
+                client
+                    .abort_multipart_upload()
+                    .bucket(&bucket)
+                    .key(file.key)
+                    .upload_id(upload_id)
+                    .send()
+                    .await
+                    .map_err(|error| easys3_core::error::classify(&error).to_string())?;
+            }
+        }
+    }
+    remove_resume_task(&state.resume_path, &state.resume, &id);
+    Ok(())
+}
+
+/// 将重启前的检查点恢复为实际后台任务。恢复始终使用任务原连接，避免用户切换连接后
+/// 意外传输到另一个服务。
+#[tauri::command]
+pub fn resume_task(state: State<App>, app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let task = lock(&state.resume)
+        .tasks
+        .iter()
+        .find(|task| match task {
+            ResumeTask::Upload { id: task_id, .. } | ResumeTask::Download { id: task_id, .. } => {
+                task_id == &id
+            }
+        })
+        .cloned()
+        .ok_or("可恢复任务不存在")?;
+
+    match task {
+        ResumeTask::Upload {
+            id,
+            connection_id,
+            bucket,
+            files,
+            storage_class,
+            created_at,
+        } => {
+            let connection = state.connection_by_id(&connection_id)?;
+            let client = state.client_for_connection(&connection)?;
+            let upload_files: Vec<_> = files
+                .iter()
+                .map(|file| (PathBuf::from(&file.path), file.key.clone()))
+                .collect();
+            if upload_files.is_empty() {
+                return Err("恢复任务没有可上传文件".to_string());
+            }
+            let bytes_total = tasks::upload_files_size(&upload_files);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let shared = TaskShared::new(tasks::new_task_info(
+                &id,
+                TaskKind::Upload,
+                &bucket,
+                upload_files.len(),
+                bytes_total,
+            ));
+            let checkpoints = Arc::new(
+                files
+                    .iter()
+                    .map(|file| {
+                        (
+                            file.key.clone(),
+                            easys3_core::upload::MultipartCheckpoint {
+                                upload_id: file.upload_id.clone(),
+                                part_size: file.part_size,
+                                completed_parts: file
+                                    .completed_parts
+                                    .iter()
+                                    .map(|part| (part.part_number, part.e_tag.clone()))
+                                    .collect(),
+                            },
+                        )
+                    })
+                    .collect(),
+            );
+            let retry = Arc::new(Mutex::new(None));
+            {
+                let mut inner = lock(&state.inner);
+                if inner.tasks.contains_key(&id) {
+                    return Err("任务正在进行中".to_string());
+                }
+                inner.tasks.insert(
+                    id.clone(),
+                    TaskEntry {
+                        cancel: cancel.clone(),
+                        shared: shared.clone(),
+                        retry,
+                    },
+                );
+            }
+            let storage_class = storage_class
+                .as_deref()
+                .map(str::parse)
+                .transpose()
+                .map_err(|_| "不支持的存储类别".to_string())?;
+            let resume = state.resume.clone();
+            let resume_path = state.resume_path.clone();
+            let callback_id = id.clone();
+            let changed = Arc::new(
+                move |key: &str, checkpoint: easys3_core::upload::MultipartCheckpoint| {
+                    {
+                        let mut file = lock(&resume);
+                        if let Some(ResumeTask::Upload { files, .. }) = file.tasks.iter_mut().find(|task| matches!(task, ResumeTask::Upload { id, .. } if id == &callback_id)) {
+                        if let Some(item) = files.iter_mut().find(|item| item.key == key) {
+                            item.upload_id = checkpoint.upload_id;
+                            item.part_size = checkpoint.part_size;
+                            item.completed_parts = checkpoint.completed_parts.into_iter().map(|(part_number, e_tag)| ResumePart { part_number, e_tag }).collect();
+                        }
+                    }
+                    }
+                    save_resume_snapshot(&resume_path, &resume);
+                },
+            );
+            let resume = state.resume.clone();
+            let resume_path = state.resume_path.clone();
+            let callback_id = id.clone();
+            let completed =
+                Arc::new(move || remove_resume_task(&resume_path, &resume, &callback_id));
+            tasks::spawn_upload(
+                app,
+                client,
+                bucket,
+                upload_files,
+                cancel,
+                shared,
+                storage_class,
+                state.transfer_settings(),
+                state.upload_throttle.clone(),
+                Some(changed),
+                Some(checkpoints),
+                Some(completed),
+            );
+            let _ = created_at;
+        }
+        ResumeTask::Download {
+            id,
+            connection_id,
+            bucket,
+            items,
+            dest,
+            conflict,
+            created_at,
+        } => {
+            let connection = state.connection_by_id(&connection_id)?;
+            let client = state.client_for_connection(&connection)?;
+            let control = easys3_core::s3::build_control_client(&connection)
+                .map_err(|error| error.to_string())?;
+            let items: Vec<FsItem> = items
+                .into_iter()
+                .map(|item| FsItem {
+                    key: item.key,
+                    is_dir: item.is_dir,
+                })
+                .collect();
+            if !std::path::Path::new(&dest).is_dir() {
+                return Err("原下载目录不存在，无法恢复任务".to_string());
+            }
+            let cancel = Arc::new(AtomicBool::new(false));
+            let shared = TaskShared::new(tasks::new_task_info(
+                &id,
+                TaskKind::Download,
+                &bucket,
+                items.len(),
+                0,
+            ));
+            let retry = Arc::new(Mutex::new(None));
+            {
+                let mut inner = lock(&state.inner);
+                if inner.tasks.contains_key(&id) {
+                    return Err("任务正在进行中".to_string());
+                }
+                inner.tasks.insert(
+                    id.clone(),
+                    TaskEntry {
+                        cancel: cancel.clone(),
+                        shared: shared.clone(),
+                        retry: retry.clone(),
+                    },
+                );
+            }
+            let resume = state.resume.clone();
+            let resume_path = state.resume_path.clone();
+            let callback_id = id.clone();
+            let completed =
+                Arc::new(move || remove_resume_task(&resume_path, &resume, &callback_id));
+            tasks::spawn_download_expand(
+                app,
+                client,
+                control,
+                bucket,
+                items,
+                PathBuf::from(dest),
+                conflict,
+                None,
+                cancel,
+                shared,
+                retry,
+                state.transfer_settings(),
+                state.download_throttle.clone(),
+                true,
+                Some(completed),
+            );
+            let _ = created_at;
+        }
+    }
+    Ok(())
+}
+
+fn save_resume_snapshot(
+    path: &std::path::Path,
+    resume: &Arc<Mutex<easys3_core::resume::ResumeFile>>,
+) {
+    let file = lock(resume).clone();
+    let _ = easys3_core::resume::save_resume_file(path, &file);
+}
+
+fn remove_resume_task(
+    path: &std::path::Path,
+    resume: &Arc<Mutex<easys3_core::resume::ResumeFile>>,
+    id: &str,
+) {
+    lock(resume).tasks.retain(|task| match task {
+        ResumeTask::Upload { id: task_id, .. } | ResumeTask::Download { id: task_id, .. } => {
+            task_id != id
+        }
+    });
+    save_resume_snapshot(path, resume);
 }
 
 #[tauri::command]
@@ -196,6 +493,52 @@ pub fn is_download_directory(dest: String) -> bool {
     std::path::Path::new(&dest).is_dir()
 }
 
+#[tauri::command]
+pub async fn presign_get(
+    state: State<'_, App>,
+    bucket: String,
+    keys: Vec<String>,
+    seconds: u64,
+) -> Result<Vec<String>, String> {
+    if keys.is_empty() {
+        return Err("请选择至少一个对象".to_string());
+    }
+    let (client, _) = state.current_client()?;
+    let mut urls = Vec::with_capacity(keys.len());
+    for key in keys {
+        urls.push(
+            easys3_core::presign::get_url(&client, &bucket, &key, seconds)
+                .await
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(urls)
+}
+
+#[tauri::command]
+pub async fn presign_put(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    seconds: u64,
+) -> Result<String, String> {
+    if key.trim().is_empty() {
+        return Err("上传对象名称不能为空".to_string());
+    }
+    let (client, _) = state.current_client()?;
+    easys3_core::presign::put_url(&client, &bucket, &key, seconds)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn export_presign_list(path: String, urls: Vec<String>) -> Result<(), String> {
+    if urls.is_empty() {
+        return Err("没有可导出的链接".to_string());
+    }
+    std::fs::write(&path, urls.join("\n")).map_err(|error| format!("导出链接清单失败：{error}"))
+}
+
 // ---------- 传输设置（自动重试 / 限速 / 并发 / 分片） ----------
 
 /// "打开"（P0-10）：下载对象到系统临时目录，完成后用默认程序打开。
@@ -284,6 +627,31 @@ pub async fn object_detail(
 ) -> Result<easys3_core::object::ObjectDetail, String> {
     let (client, _) = state.current_control_client()?;
     easys3_core::object::head_object(&client, &bucket, &key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn object_versions(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+) -> Result<Vec<easys3_core::object::ObjectVersionInfo>, String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::list_object_versions(&client, &bucket, &key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn restore_object_version(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    version: String,
+) -> Result<(), String> {
+    let (client, _) = state.current_client()?;
+    easys3_core::object::restore_object_version(&client, &bucket, &key, &version)
         .await
         .map_err(|e| e.to_string())
 }
@@ -445,6 +813,7 @@ pub fn start_upload(
     paths: Vec<String>,
     storage: Option<String>,
 ) -> Result<String, String> {
+    let connection = state.current_connection()?;
     let (client, _) = state.current_client()?;
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     let files = collect_upload_files(&path_bufs, &prefix);
@@ -484,6 +853,59 @@ pub fn start_upload(
         .transpose()
         .map_err(|_| "不支持的存储类别".to_string())?;
     let settings = state.transfer_settings();
+    let storage_name = storage
+        .clone()
+        .filter(|value| !value.is_empty() && value != "STANDARD");
+    {
+        let mut resume = lock(&state.resume);
+        resume.tasks.push(ResumeTask::Upload {
+            id: id.clone(),
+            connection_id: connection.id,
+            bucket: bucket.clone(),
+            files: files
+                .iter()
+                .map(|(path, key)| ResumeUploadFile {
+                    path: path.to_string_lossy().into_owned(),
+                    key: key.clone(),
+                    upload_id: None,
+                    part_size: 0,
+                    completed_parts: Vec::new(),
+                })
+                .collect(),
+            storage_class: storage_name,
+            created_at: lock(&shared.info).created_at,
+        });
+    }
+    state.save_resume()?;
+    let resume = state.resume.clone();
+    let resume_path = state.resume_path.clone();
+    let task_id = id.clone();
+    let checkpoints =
+        Arc::new(
+            move |key: &str, checkpoint: easys3_core::upload::MultipartCheckpoint| {
+                {
+                    let mut file = lock(&resume);
+                    if let Some(ResumeTask::Upload { files, .. }) = file.tasks.iter_mut().find(
+                        |task| matches!(task, ResumeTask::Upload { id, .. } if id == &task_id),
+                    ) {
+                        if let Some(item) = files.iter_mut().find(|item| item.key == key) {
+                            item.upload_id = checkpoint.upload_id;
+                            item.part_size = checkpoint.part_size;
+                            item.completed_parts = checkpoint
+                                .completed_parts
+                                .into_iter()
+                                .map(|(part_number, e_tag)| ResumePart { part_number, e_tag })
+                                .collect();
+                        }
+                    }
+                }
+                save_resume_snapshot(&resume_path, &resume);
+            },
+        );
+    let resume = state.resume.clone();
+    let resume_path = state.resume_path.clone();
+    let task_id = id.clone();
+    let completed = Arc::new(move || remove_resume_task(&resume_path, &resume, &task_id));
     tasks::spawn_upload(
         app,
         client,
@@ -494,6 +916,9 @@ pub fn start_upload(
         storage_class,
         settings,
         state.upload_throttle.clone(),
+        Some(checkpoints),
+        None,
+        Some(completed),
     );
     Ok(id)
 }
@@ -507,6 +932,7 @@ pub fn start_download(
     dest: String,
     conflict: String,
 ) -> Result<String, String> {
+    let connection = state.current_connection()?;
     // 传输客户端下载对象体；控制面客户端展开列出（带超时，规格）
     let (client, _) = state.current_client()?;
     let (control, _) = state.current_control_client()?;
@@ -531,6 +957,29 @@ pub fn start_download(
             },
         );
     }
+    {
+        let mut resume = lock(&state.resume);
+        resume.tasks.push(ResumeTask::Download {
+            id: id.clone(),
+            connection_id: connection.id,
+            bucket: bucket.clone(),
+            items: items
+                .iter()
+                .map(|item| easys3_core::resume::ResumeItem {
+                    key: item.key.clone(),
+                    is_dir: item.is_dir,
+                })
+                .collect(),
+            dest: dest.clone(),
+            conflict: conflict.clone(),
+            created_at: lock(&shared.info).created_at,
+        });
+    }
+    state.save_resume()?;
+    let resume = state.resume.clone();
+    let resume_path = state.resume_path.clone();
+    let task_id = id.clone();
+    let completed = Arc::new(move || remove_resume_task(&resume_path, &resume, &task_id));
     tasks::spawn_download_expand(
         app,
         client,
@@ -545,6 +994,8 @@ pub fn start_download(
         retry,
         state.transfer_settings(),
         state.download_throttle.clone(),
+        true,
+        Some(completed),
     );
     Ok(id)
 }
@@ -590,6 +1041,9 @@ pub fn cancel_task(state: State<App>, task_id: String) -> Result<(), String> {
     entry
         .cancel
         .store(true, std::sync::atomic::Ordering::Relaxed);
+    // 主动取消不应在下次启动继续；上传执行器会观察取消标志并 Abort multipart。
+    drop(inner);
+    remove_resume_task(&state.resume_path, &state.resume, &task_id);
     Ok(())
 }
 
@@ -673,6 +1127,9 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 None,
                 settings,
                 state.upload_throttle.clone(),
+                None,
+                None,
+                None,
             );
         }
         Some(RetryJob::Download {
@@ -730,6 +1187,8 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 retry_slot,
                 state.transfer_settings(),
                 state.download_throttle.clone(),
+                false,
+                None,
             );
         }
         Some(RetryJob::Delete {

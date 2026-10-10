@@ -41,6 +41,16 @@ pub struct UploadOptions {
     pub throttle: Option<Arc<Throttle>>,
 }
 
+/// multipart 上传的可持久化检查点。调用方负责将它写入应用配置目录。
+#[derive(Clone, Debug, Default)]
+pub struct MultipartCheckpoint {
+    pub upload_id: Option<String>,
+    pub part_size: u64,
+    pub completed_parts: Vec<(i32, String)>,
+}
+
+pub type CheckpointFn = Arc<dyn Fn(MultipartCheckpoint) + Send + Sync>;
+
 /// 计算分片布局：分片大小与数量。
 /// part_size_cfg = 0 用默认值；非 0 时强制不低于 5MB（S3 硬性约束，规格 §2），
 /// 且始终保证分片数不超过 MAX_PARTS。
@@ -64,6 +74,26 @@ pub async fn upload_file(
     progress: ProgressFn,
     cancel: Arc<AtomicBool>,
     opts: UploadOptions,
+) -> Result<(), CoreError> {
+    upload_file_resumable(
+        client, bucket, key, path, progress, cancel, opts, None, None,
+    )
+    .await
+}
+
+/// 可恢复上传。已有 `UploadId` 时以服务端 ListParts 为事实来源，已完成分片不会重复上传。
+/// 主动取消会 Abort；其它失败保留检查点，调用方可在下次启动恢复。
+#[allow(clippy::too_many_arguments)]
+pub async fn upload_file_resumable(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    path: &Path,
+    progress: ProgressFn,
+    cancel: Arc<AtomicBool>,
+    opts: UploadOptions,
+    checkpoint: Option<MultipartCheckpoint>,
+    checkpoint_changed: Option<CheckpointFn>,
 ) -> Result<(), CoreError> {
     let size = tokio::fs::metadata(path)
         .await
@@ -95,7 +125,19 @@ pub async fn upload_file(
         progress(size, size);
         Ok(())
     } else {
-        upload_multipart(client, bucket, key, path, size, progress, cancel, opts).await
+        upload_multipart(
+            client,
+            bucket,
+            key,
+            path,
+            size,
+            progress,
+            cancel,
+            opts,
+            checkpoint,
+            checkpoint_changed,
+        )
+        .await
     }
 }
 
@@ -109,32 +151,88 @@ async fn upload_multipart(
     progress: ProgressFn,
     cancel: Arc<AtomicBool>,
     opts: UploadOptions,
+    checkpoint: Option<MultipartCheckpoint>,
+    checkpoint_changed: Option<CheckpointFn>,
 ) -> Result<(), CoreError> {
-    let mut request = client.create_multipart_upload().bucket(bucket).key(key);
-    if let Some(ref class) = opts.storage_class {
-        request = request.storage_class(class.clone());
+    let old = checkpoint.unwrap_or_default();
+    let (upload_id, completed_parts) = match old.upload_id.filter(|id| !id.is_empty()) {
+        Some(upload_id) => {
+            let response = client
+                .list_parts()
+                .bucket(bucket)
+                .key(key)
+                .upload_id(&upload_id)
+                .send()
+                .await
+                .map_err(|e| classify(&e))?;
+            let parts = response
+                .parts()
+                .iter()
+                .filter_map(|part| Some((part.part_number()?, part.e_tag()?.to_owned())))
+                .collect();
+            (upload_id, parts)
+        }
+        None => {
+            let mut request = client.create_multipart_upload().bucket(bucket).key(key);
+            if let Some(ref class) = opts.storage_class {
+                request = request.storage_class(class.clone());
+            }
+            let response = request.send().await.map_err(|e| classify(&e))?;
+            (
+                response.upload_id().unwrap_or_default().to_owned(),
+                Vec::new(),
+            )
+        }
+    };
+    let part_size = if old.part_size > 0 {
+        old.part_size
+    } else {
+        part_layout(size, opts.part_size).0
+    };
+    if let Some(callback) = checkpoint_changed.as_ref() {
+        callback(MultipartCheckpoint {
+            upload_id: Some(upload_id.clone()),
+            part_size,
+            completed_parts: completed_parts.clone(),
+        });
     }
-    let mpu = request.send().await.map_err(|e| classify(&e))?;
     let target = PartTarget {
         client,
         bucket,
         key,
-        upload_id: mpu.upload_id().unwrap_or_default(),
+        upload_id: &upload_id,
     };
 
-    let result = upload_parts(&target, path, size, &progress, &cancel, &opts).await;
+    let result = upload_parts(
+        &target,
+        path,
+        size,
+        &progress,
+        &cancel,
+        &opts,
+        part_size,
+        completed_parts,
+        checkpoint_changed.clone(),
+    )
+    .await;
 
     match result {
         Ok(()) => Ok(()),
         Err(e) => {
-            // 取消/失败都要 abort，否则残片永久占用存储（规格）
-            let _ = client
-                .abort_multipart_upload()
-                .bucket(bucket)
-                .key(key)
-                .upload_id(target.upload_id)
-                .send()
-                .await;
+            // 旧调用路径没有检查点，仍按既有规则：失败/取消均 abort。
+            // 只有启用检查点的恢复任务才会在异常失败后保留残片。
+            if matches!(e, CoreError::Cancelled) || checkpoint_changed.is_none() {
+                let _ = client
+                    .abort_multipart_upload()
+                    .bucket(bucket)
+                    .key(key)
+                    .upload_id(target.upload_id)
+                    .send()
+                    .await;
+                if let Some(callback) = checkpoint_changed.as_ref() {
+                    callback(MultipartCheckpoint::default());
+                }
+            }
             Err(e)
         }
     }
@@ -148,6 +246,7 @@ struct PartTarget<'a> {
     upload_id: &'a str,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn upload_parts(
     target: &PartTarget<'_>,
     path: &Path,
@@ -155,6 +254,9 @@ async fn upload_parts(
     progress: &ProgressFn,
     cancel: &Arc<AtomicBool>,
     opts: &UploadOptions,
+    part_size: u64,
+    prior_parts: Vec<(i32, String)>,
+    checkpoint_changed: Option<CheckpointFn>,
 ) -> Result<(), CoreError> {
     let PartTarget {
         client,
@@ -162,12 +264,22 @@ async fn upload_parts(
         key,
         upload_id,
     } = *target;
-    let (part_size, part_count) = part_layout(size, opts.part_size);
+    let (_, part_count) = part_layout(size, part_size);
     let mut file = tokio::fs::File::open(path)
         .await
         .map_err(|e| CoreError::io(format!("打开文件失败 {}", path.display()), e))?;
 
-    let mut completed: Vec<CompletedPart> = Vec::new();
+    let mut completed: Vec<CompletedPart> = prior_parts
+        .iter()
+        .map(|(number, tag)| {
+            CompletedPart::builder()
+                .part_number(*number)
+                .e_tag(tag)
+                .build()
+        })
+        .collect();
+    let completed_numbers: std::collections::HashSet<i32> =
+        prior_parts.iter().map(|(number, _)| *number).collect();
     let mut done: u64 = 0;
 
     for part_number in 1..=(part_count as i32) {
@@ -179,6 +291,12 @@ async fn upload_parts(
         file.read_exact(&mut buf)
             .await
             .map_err(|e| CoreError::io(format!("读取文件失败 {}", path.display()), e))?;
+
+        if completed_numbers.contains(&part_number) {
+            done += this_len as u64;
+            progress(done, size);
+            continue;
+        }
 
         if let Some(throttle) = opts.throttle.as_ref() {
             throttle.acquire(this_len as u64).await;
@@ -206,6 +324,17 @@ async fn upload_parts(
         );
         done += this_len as u64;
         progress(done, size);
+        if let Some(callback) = checkpoint_changed.as_ref() {
+            let parts = completed
+                .iter()
+                .filter_map(|part| Some((part.part_number()?, part.e_tag()?.to_owned())))
+                .collect();
+            callback(MultipartCheckpoint {
+                upload_id: Some(upload_id.to_owned()),
+                part_size,
+                completed_parts: parts,
+            });
+        }
     }
 
     let parts = CompletedMultipartUpload::builder()
@@ -220,6 +349,9 @@ async fn upload_parts(
         .send()
         .await
         .map_err(|e| classify(&e))?;
+    if let Some(callback) = checkpoint_changed {
+        callback(MultipartCheckpoint::default());
+    }
     Ok(())
 }
 

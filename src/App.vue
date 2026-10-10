@@ -54,6 +54,11 @@ const previewName = ref("");
 const showObjectDetail = ref(false);
 const objectDetail = ref<import("./types").ObjectDetail | null>(null);
 const showSettings = ref(false);
+const showPresign = ref(false);
+const presignMode = ref<"get" | "put">("get");
+const presignSeconds = ref(3600);
+const presignKey = ref("");
+const presignUrls = ref<string[]>([]);
 
 // 新建文件夹与历史 multipart 残片管理
 const newFolderName = ref("");
@@ -477,6 +482,45 @@ async function copyKey(entry: Entry) {
   }
 }
 
+function openPresign(mode: "get" | "put") {
+  if (store.browse.mode !== "objects") return;
+  if (mode === "get" && !store.selection.size) {
+    store.toast("请先选择要分享的对象", "error");
+    return;
+  }
+  presignMode.value = mode;
+  presignKey.value = mode === "put" ? store.browse.prefix : "";
+  presignUrls.value = [];
+  showPresign.value = true;
+}
+
+async function generatePresign() {
+  if (!Number.isInteger(presignSeconds.value) || presignSeconds.value < 1 || presignSeconds.value > 604800) {
+    store.toast("有效期必须在 1 秒至 7 天之间", "error");
+    return;
+  }
+  try {
+    presignUrls.value = presignMode.value === "get"
+      ? await api.presignGet(store.browse.bucket, selectionItems().filter((item) => !item.is_dir).map((item) => item.key), presignSeconds.value)
+      : [await api.presignPut(store.browse.bucket, presignKey.value, presignSeconds.value)];
+    if (!presignUrls.value.length) store.toast("文件夹不能直接生成下载链接，请选择文件", "error");
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
+async function copyPresignUrls() {
+  try { await writeText(presignUrls.value.join("\n")); store.toast("链接已复制"); }
+  catch { store.toast("复制失败", "error"); }
+}
+
+async function exportPresignUrls() {
+  const path = await (await import("@tauri-apps/plugin-dialog")).save({ title: "导出链接清单", defaultPath: "easyS3-links.txt" });
+  if (!path) return;
+  try {
+    await api.exportPresignList(path, presignUrls.value);
+    store.toast("链接清单已导出");
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
 async function openFile(entry: Entry) {
   try {
     await api.openObject(store.browse.bucket, entry.key);
@@ -602,7 +646,8 @@ async function openFile(entry: Entry) {
              <button class="btn" @click="pickUpload(false)">上传文件</button>
              <button class="btn" @click="pickUpload(true)">上传文件夹</button>
              <button class="btn" @click="showFolderDialog = true">新建文件夹</button>
-             <button class="btn" @click="openMultipartDialog">碎片管理</button>
+              <button class="btn" @click="openMultipartDialog">碎片管理</button>
+              <button class="btn" @click="openPresign('put')">生成上传链接</button>
           </template>
           <span v-if="store.selection.size" class="selected-count">
             已选 {{ store.selection.size }} 项
@@ -610,6 +655,7 @@ async function openFile(entry: Entry) {
           <button class="btn" :disabled="!store.selection.size" @click="downloadSelection">
             下载
           </button>
+          <button class="btn" :disabled="!store.selection.size" @click="openPresign('get')">分享链接</button>
           <button class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, false)">
             复制
           </button>
@@ -716,6 +762,24 @@ async function openFile(entry: Entry) {
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" />
     <SettingsDialog v-model="showSettings" />
+
+    <div v-if="showPresign" class="modal-mask">
+      <div class="modal presign-modal">
+        <div class="modal-head">生成{{ presignMode === "get" ? "下载" : "上传" }}链接</div>
+        <div class="modal-body copy-form">
+          <p v-if="presignMode === 'get'">将为已选文件生成临时下载链接。</p>
+          <label v-else class="copy-row"><span class="copy-label">对象名称</span><input v-model="presignKey" class="input" placeholder="例如 incoming/file.zip" /></label>
+          <label class="copy-row"><span class="copy-label">有效期（秒）</span><input v-model.number="presignSeconds" class="input" type="number" min="1" max="604800" /></label>
+          <textarea v-if="presignUrls.length" class="input presign-result" readonly :value="presignUrls.join('\n')" />
+        </div>
+        <div class="modal-foot">
+          <button class="btn" @click="showPresign = false">关闭</button>
+          <button v-if="presignUrls.length" class="btn" @click="copyPresignUrls">复制</button>
+          <button v-if="presignUrls.length && presignMode === 'get'" class="btn" @click="exportPresignUrls">导出清单</button>
+          <button class="btn primary" @click="generatePresign">生成</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showFolderDialog" class="modal-mask">
       <div class="modal small-modal">
@@ -934,6 +998,8 @@ async function openFile(entry: Entry) {
 .copy-radio { display: flex; align-items: center; gap: 4px; }
 .copy-hint { margin: 0; font-size: 12px; color: var(--muted); }
 .multipart-modal { width: min(760px, 94vw); }
+.presign-modal { width: min(680px, 94vw); }
+.presign-result { min-height: 130px; resize: vertical; font-family: ui-monospace, monospace; }
 .multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
 .break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }

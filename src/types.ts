@@ -49,6 +49,9 @@ export interface ObjectDetail {
   content_type: string | null;
   metadata: { key: string; value: string }[];
 }
+export interface ObjectVersionInfo {
+  version_id: string; size: number; last_modified: string | null; is_delete_marker: boolean; is_latest: boolean;
+}
 
 export interface MultipartUploadInfo {
   key: string;
@@ -110,6 +113,14 @@ export interface TaskInfo {
   failures: Failure[];
   /** 瞬时错误自动重试累计次数 */
   retry_count: number;
+  created_at: number;
+}
+
+/** P1-01：重启后可手动恢复的传输摘要。 */
+export interface ResumableTaskInfo {
+  id: string;
+  kind: "upload" | "download";
+  bucket: string;
   created_at: number;
 }
 

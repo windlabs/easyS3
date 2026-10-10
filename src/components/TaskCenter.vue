@@ -3,7 +3,9 @@ import { computed } from "vue";
 import {
   cancelTask,
   clearFinished,
+  discardResumableTask,
   retryTask,
+  resumeTask,
   setTasksHover,
   tasksStore,
 } from "../store";
@@ -59,6 +61,10 @@ function fileStats(t: TaskInfo): string {
   return parts.join("，");
 }
 
+async function resumeAll() {
+  await Promise.all(tasksStore.resumable.map((task) => resumeTask(task.id)));
+}
+
 // 传输速度：按 task-update 事件增量估算（≥500ms 窗口均值），纯前端计算
 const speedSamples = new Map<string, { bytes: number; ts: number; speed: number }>();
 
@@ -88,7 +94,7 @@ const speeds = computed(() => {
 
 <template>
   <div
-    v-if="tasksStore.tasks.length"
+    v-if="tasksStore.tasks.length || tasksStore.resumable.length"
     class="task-center"
     @mouseenter="setTasksHover(true)"
     @mouseleave="setTasksHover(false)"
@@ -107,6 +113,22 @@ const speeds = computed(() => {
       <span class="toggle">{{ tasksStore.open ? "▾" : "▴" }}</span>
     </div>
     <div v-if="tasksStore.open" class="task-list">
+      <div v-if="tasksStore.resumable.length" class="resume-group">
+        <div class="resume-title">
+          可恢复任务（请确认后恢复，或放弃）
+          <button class="btn sm ghost" @click="resumeAll">全部恢复</button>
+        </div>
+        <div v-for="t in tasksStore.resumable" :key="t.id" class="task-card">
+          <div class="task-line">
+            <span class="kind">{{ kindLabel[t.kind] }}</span>
+            <span class="bucket muted" :title="t.bucket">{{ t.bucket }}</span>
+            <span class="status canceled">可恢复</span>
+            <span class="spacer" />
+            <button class="btn sm" @click="resumeTask(t.id)">恢复</button>
+            <button class="btn sm" @click="discardResumableTask(t.id)">放弃</button>
+          </div>
+        </div>
+      </div>
       <div
         v-for="t in tasksStore.tasks"
         :key="t.id"
@@ -218,6 +240,8 @@ const speeds = computed(() => {
 .task-card:last-child {
   border-bottom: none;
 }
+.resume-group { border-bottom: 1px solid var(--border); }
+.resume-title { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0; color: var(--muted); font-size: 12px; }
 .task-line {
   display: flex;
   align-items: center;

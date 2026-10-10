@@ -6,6 +6,7 @@
 use crate::secrets::SecretStore;
 use crate::tasks::TaskEntry;
 use easys3_core::config::{load_connections, save_connections, ConnectionConfig, ConnectionsFile};
+use easys3_core::resume::{load_resume_file, save_resume_file, ResumeFile};
 use easys3_core::settings::{load_settings, TransferSettings};
 use easys3_core::throttle::Throttle;
 use std::collections::HashMap;
@@ -17,6 +18,9 @@ pub struct App {
     pub config_path: PathBuf,
     pub secrets: SecretStore,
     pub settings_path: PathBuf,
+    /// P1-01 未完成上传/下载检查点；不含凭据。
+    pub resume_path: PathBuf,
+    pub resume: Arc<Mutex<ResumeFile>>,
     /// 传输设置快照（保存设置时更新；任务启动时读取快照）
     pub settings: Mutex<TransferSettings>,
     /// 全局上传限速（跨任务共享，保存设置热调整）
@@ -68,6 +72,8 @@ impl App {
             let _ = save_connections(&config_path, &file);
         }
         let settings_path = dir.join("settings.json");
+        let resume_path = dir.join("transfers.json");
+        let resume = load_resume_file(&resume_path).unwrap_or_default();
         let settings = load_settings(&settings_path);
         let upload_throttle = Arc::new(Throttle::new(settings.upload_limit_kbps * 1024));
         let download_throttle = Arc::new(Throttle::new(settings.download_limit_kbps * 1024));
@@ -76,6 +82,8 @@ impl App {
             config_path,
             secrets,
             settings_path,
+            resume_path,
+            resume: Arc::new(Mutex::new(resume)),
             settings: Mutex::new(settings),
             upload_throttle,
             download_throttle,
@@ -115,20 +123,48 @@ impl App {
         Ok(connection)
     }
 
+    /// 从持久化配置取得指定连接及安全存储中的密钥。供重启后的恢复任务使用。
+    pub fn connection_by_id(&self, id: &str) -> Result<ConnectionConfig, String> {
+        let mut connection = {
+            let inner = lock(&self.inner);
+            inner
+                .file
+                .connections
+                .iter()
+                .find(|connection| connection.id == id)
+                .cloned()
+                .ok_or("原连接已删除，无法恢复任务")?
+        };
+        connection.secret_key = self
+            .secrets
+            .get(&connection.id)?
+            .ok_or("未找到原连接的 Secret Key，无法恢复任务")?;
+        Ok(connection)
+    }
+
     /// 当前连接的 S3 客户端（按连接缓存；配置变更时由命令层主动失效）。
     pub fn current_client(&self) -> Result<(aws_sdk_s3::Client, String), String> {
         let connection = self.current_connection()?;
+        let client = self.client_for_connection(&connection)?;
+        Ok((client, connection.name))
+    }
+
+    /// 为指定配置构建/取得传输 Client；恢复任务使用原连接快照，不能依赖当前选中连接。
+    pub fn client_for_connection(
+        &self,
+        connection: &ConnectionConfig,
+    ) -> Result<aws_sdk_s3::Client, String> {
         let client = {
             let mut inner = lock(&self.inner);
             if let Some(c) = inner.clients.get(&connection.id) {
                 c.clone()
             } else {
-                let c = easys3_core::s3::build_client(&connection).map_err(|e| e.to_string())?;
+                let c = easys3_core::s3::build_client(connection).map_err(|e| e.to_string())?;
                 inner.clients.insert(connection.id.clone(), c.clone());
                 c
             }
         };
-        Ok((client, connection.name))
+        Ok(client)
     }
 
     /// 当前连接的控制面客户端（浏览 / 测试 / 计数 / 预览 / 删除：30s 尝试超时，规格）。
@@ -153,5 +189,11 @@ impl App {
     pub fn save_file(&self) -> Result<(), String> {
         let inner = lock(&self.inner);
         save_connections(&self.config_path, &inner.file).map_err(|e| e.to_string())
+    }
+
+    /// 保存 P1-01 可恢复任务清单；调用方必须先完成对 `resume` 的短临界区修改。
+    pub fn save_resume(&self) -> Result<(), String> {
+        let file = lock(&self.resume).clone();
+        save_resume_file(&self.resume_path, &file).map_err(|e| e.to_string())
     }
 }

@@ -23,6 +23,28 @@ pub async fn download_object(
     cancel: Arc<AtomicBool>,
     throttle: Option<Arc<Throttle>>,
 ) -> Result<(), CoreError> {
+    let result =
+        download_object_resumable(client, bucket, key, dest, progress, cancel, throttle, false)
+            .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(partial_path(dest)).await;
+    }
+    result
+}
+
+/// 将内容先写入同目录 `.part` 文件。恢复模式下，若存在该文件，使用 Range 从
+/// 已写入偏移继续；完成后再替换最终文件。失败时保留 `.part` 供下次恢复。
+#[allow(clippy::too_many_arguments)]
+pub async fn download_object_resumable(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    dest: &Path,
+    progress: ProgressFn,
+    cancel: Arc<AtomicBool>,
+    throttle: Option<Arc<Throttle>>,
+    resume: bool,
+) -> Result<(), CoreError> {
     if let Some(dir) = dest.parent() {
         if !dir.as_os_str().is_empty() {
             tokio::fs::create_dir_all(dir)
@@ -31,30 +53,55 @@ pub async fn download_object(
         }
     }
 
-    let out = client
-        .get_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await
-        .map_err(|e| classify(&e))?;
-    let total = out.content_length().unwrap_or(0).max(0) as u64;
+    let partial = partial_path(dest);
+    let mut offset = if resume {
+        tokio::fs::metadata(&partial)
+            .await
+            .map(|meta| meta.len())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let (out, offset) = loop {
+        let mut request = client.get_object().bucket(bucket).key(key);
+        if offset > 0 {
+            request = request.range(format!("bytes={offset}-"));
+        }
+        let out = request.send().await.map_err(|e| classify(&e))?;
+        // 部分 S3 兼容服务会忽略 Range 并返回完整对象；此时不能 append，否则会得到
+        // 损坏文件。删除临时文件后以普通请求重新开始。
+        if offset > 0 && out.content_range().is_none() {
+            let _ = tokio::fs::remove_file(&partial).await;
+            offset = 0;
+            continue;
+        }
+        break (out, offset);
+    };
+    let total = out.content_length().unwrap_or(0).max(0) as u64 + offset;
 
     let result = stream_to_file(
         out.body.into_async_read(),
-        dest,
+        &partial,
         total,
+        offset,
         &progress,
         &cancel,
         throttle,
     )
     .await;
-
-    if result.is_err() {
-        // 取消或失败：删除未完成的分段文件（规格；不做断点续传）
-        let _ = tokio::fs::remove_file(dest).await;
+    if matches!(result, Err(CoreError::Cancelled)) {
+        let _ = tokio::fs::remove_file(&partial).await;
     }
-    result
+    result?;
+    tokio::fs::rename(&partial, dest)
+        .await
+        .map_err(|e| CoreError::io(format!("完成下载失败 {}", dest.display()), e))
+}
+
+pub fn partial_path(dest: &Path) -> std::path::PathBuf {
+    let mut path = dest.as_os_str().to_os_string();
+    path.push(".part");
+    path.into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -62,15 +109,24 @@ async fn stream_to_file<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
     dest: &Path,
     total: u64,
+    offset: u64,
     progress: &ProgressFn,
     cancel: &Arc<AtomicBool>,
     throttle: Option<Arc<Throttle>>,
 ) -> Result<(), CoreError> {
-    let mut file = tokio::fs::File::create(dest)
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.create(true).write(true);
+    if offset == 0 {
+        opts.truncate(true);
+    } else {
+        opts.append(true);
+    }
+    let mut file = opts
+        .open(dest)
         .await
         .map_err(|e| CoreError::io(format!("创建文件失败 {}", dest.display()), e))?;
     let mut buf = vec![0u8; 256 * 1024];
-    let mut done: u64 = 0;
+    let mut done = offset;
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Err(CoreError::Cancelled);

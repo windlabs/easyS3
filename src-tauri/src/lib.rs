@@ -19,6 +19,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::get_resumable_tasks,
+            commands::discard_resumable_task,
+            commands::resume_task,
             commands::save_connection,
             commands::delete_connection,
             commands::set_current_connection,
@@ -28,7 +31,12 @@ pub fn run() {
             commands::count_objects,
             commands::preview_object,
             commands::is_download_directory,
+            commands::presign_get,
+            commands::presign_put,
+            commands::export_presign_list,
             commands::object_detail,
+            commands::object_versions,
+            commands::restore_object_version,
             commands::create_folder,
             commands::start_copy,
             commands::list_multipart_uploads,

@@ -38,6 +38,78 @@ pub struct MultipartPartInfo {
     pub e_tag: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ObjectVersionInfo {
+    pub version_id: String,
+    pub size: u64,
+    pub last_modified: Option<String>,
+    pub is_delete_marker: bool,
+    pub is_latest: bool,
+}
+
+pub async fn list_object_versions(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<Vec<ObjectVersionInfo>, CoreError> {
+    let out = client
+        .list_object_versions()
+        .bucket(bucket)
+        .prefix(key)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    let mut result: Vec<_> = out
+        .versions()
+        .iter()
+        .filter(|version| version.key() == Some(key))
+        .filter_map(|version| {
+            Some(ObjectVersionInfo {
+                version_id: version.version_id()?.to_owned(),
+                size: version.size().unwrap_or(0).max(0) as u64,
+                last_modified: version.last_modified().map(ToString::to_string),
+                is_delete_marker: false,
+                is_latest: version.is_latest().unwrap_or(false),
+            })
+        })
+        .collect();
+    result.extend(
+        out.delete_markers()
+            .iter()
+            .filter(|marker| marker.key() == Some(key))
+            .filter_map(|marker| {
+                Some(ObjectVersionInfo {
+                    version_id: marker.version_id()?.to_owned(),
+                    size: 0,
+                    last_modified: marker.last_modified().map(ToString::to_string),
+                    is_delete_marker: true,
+                    is_latest: marker.is_latest().unwrap_or(false),
+                })
+            }),
+    );
+    result.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+    Ok(result)
+}
+
+/// 将指定历史版本复制为当前对象。删除标记不能恢复为对象内容。
+pub async fn restore_object_version(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    version_id: &str,
+) -> Result<(), CoreError> {
+    let source = format!("{}?versionId={}", copy_source(bucket, key), version_id);
+    client
+        .copy_object()
+        .bucket(bucket)
+        .key(key)
+        .copy_source(source)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
 pub async fn head_object(
     client: &Client,
     bucket: &str,

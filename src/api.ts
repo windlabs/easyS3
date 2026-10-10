@@ -12,6 +12,8 @@ import type {
   MultipartUploadInfo,
   MultipartPartInfo,
   TransferSettings,
+  ObjectVersionInfo,
+  ResumableTaskInfo,
 } from "./types";
 
 // 命令参数一律使用与 Rust 参数名完全一致的键（均为单词，规避大小写转换问题）
@@ -34,8 +36,16 @@ export const previewObject = (bucket: string, key: string) =>
   invoke<PreviewData>("preview_object", { bucket, key });
 export const isDownloadDirectory = (dest: string) =>
   invoke<boolean>("is_download_directory", { dest });
+export const presignGet = (bucket: string, keys: string[], seconds: number) =>
+  invoke<string[]>("presign_get", { bucket, keys, seconds });
+export const presignPut = (bucket: string, key: string, seconds: number) =>
+  invoke<string>("presign_put", { bucket, key, seconds });
+export const exportPresignList = (path: string, urls: string[]) =>
+  invoke<void>("export_presign_list", { path, urls });
 export const objectDetail = (bucket: string, key: string) =>
   invoke<ObjectDetail>("object_detail", { bucket, key });
+export const objectVersions = (bucket: string, key: string) => invoke<ObjectVersionInfo[]>("object_versions", { bucket, key });
+export const restoreObjectVersion = (bucket: string, key: string, version: string) => invoke<void>("restore_object_version", { bucket, key, version });
 export const createFolder = (bucket: string, prefix: string, name: string) =>
   invoke<void>("create_folder", { bucket, prefix, name });
 export const startCopy = (
@@ -79,6 +89,9 @@ export const startDelete = (bucket: string, items: FsItem[]) =>
 export const cancelTask = (id: string) => invoke<void>("cancel_task", { id });
 export const retryTask = (id: string) => invoke<void>("retry_task", { id });
 export const getTasks = () => invoke<TaskInfo[]>("get_tasks");
+export const getResumableTasks = () => invoke<ResumableTaskInfo[]>("get_resumable_tasks");
+export const discardResumableTask = (id: string) => invoke<void>("discard_resumable_task", { id });
+export const resumeTask = (id: string) => invoke<void>("resume_task", { id });
 export const clearFinishedTasks = () => invoke<void>("clear_finished_tasks");
 
 export const getSettings = () => invoke<TransferSettings>("get_settings");
