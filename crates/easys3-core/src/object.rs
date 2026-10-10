@@ -357,6 +357,24 @@ pub async fn create_folder(
     Ok(())
 }
 
+pub async fn create_empty_folders(
+    client: &Client,
+    bucket: &str,
+    keys: &[String],
+) -> Result<(), CoreError> {
+    for key in keys {
+        client
+            .put_object()
+            .bucket(bucket)
+            .key(key)
+            .body(ByteStream::from(Vec::new()))
+            .send()
+            .await
+            .map_err(|e| classify(&e))?;
+    }
+    Ok(())
+}
+
 /// S3 CopySource 要求 bucket/key 进行 URL 编码；`/` 用于保留对象路径分隔。
 fn copy_source(bucket: &str, key: &str) -> String {
     let mut source = String::with_capacity(bucket.len() + key.len() + 1);

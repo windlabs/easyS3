@@ -97,8 +97,12 @@ export const listMultipartParts = (bucket: string, key: string, uploadId: string
 
 export const planUpload = (paths: string[], prefix: string) =>
   invoke<UploadPlan>("plan_upload", { paths, prefix });
+export const planUploadChanges = (bucket: string, paths: string[], prefix: string) =>
+  invoke<UploadPlan>("plan_upload_changes", { bucket, paths, prefix });
 export const startUpload = (bucket: string, prefix: string, paths: string[], storage: string | null) =>
   invoke<string>("start_upload", { bucket, prefix, paths, storage });
+export const startUploadPlan = (bucket: string, plan: UploadPlan, storage: string | null) =>
+  invoke<string>("start_upload_plan", { bucket, plan, storage });
 export const startDownload = (
   bucket: string,
   items: FsItem[],

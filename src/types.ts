@@ -88,6 +88,8 @@ export interface PlannedFile {
 export interface UploadPlan {
   files: PlannedFile[];
   total_bytes: number;
+  skipped: number;
+  empty_folders: string[];
 }
 
 export interface FsItem {

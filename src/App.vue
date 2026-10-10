@@ -39,6 +39,7 @@ const showUploadConfirm = ref(false);
 const uploadPlan = ref<UploadPlan | null>(null);
 const uploadPaths = ref<string[]>([]);
 const uploadStorageClass = ref("STANDARD");
+const uploadChangesOnly = ref(false);
 
 // ---------- 删除确认 ----------
 const showDeleteConfirm = ref(false);
@@ -231,6 +232,7 @@ async function beginUpload(paths: string[]) {
     return;
   }
   try {
+    uploadChangesOnly.value = false;
     uploadPlan.value = await api.planUpload(paths, store.browse.prefix);
     uploadPaths.value = paths;
     showUploadConfirm.value = true;
@@ -242,17 +244,25 @@ async function beginUpload(paths: string[]) {
 async function confirmUpload() {
   if (!uploadPaths.value.length) return;
   try {
-    await api.startUpload(
-      store.browse.bucket,
-      store.browse.prefix,
-      uploadPaths.value,
-      uploadStorageClass.value,
-    );
+    if (uploadChangesOnly.value && uploadPlan.value) {
+      await api.startUploadPlan(store.browse.bucket, uploadPlan.value, uploadStorageClass.value);
+    } else {
+      await api.startUpload(store.browse.bucket, store.browse.prefix, uploadPaths.value, uploadStorageClass.value);
+    }
     store.tasksStore.open = true;
     showUploadConfirm.value = false;
   } catch (e) {
     store.toast(errorMessage(e), "error");
   }
+}
+
+async function refreshUploadPlan() {
+  if (!uploadPaths.value.length) return;
+  try {
+    uploadPlan.value = uploadChangesOnly.value
+      ? await api.planUploadChanges(store.browse.bucket, uploadPaths.value, store.browse.prefix)
+      : await api.planUpload(uploadPaths.value, store.browse.prefix);
+  } catch (e) { store.toast(errorMessage(e), "error"); }
 }
 
 // ---------- 下载 ----------
@@ -851,12 +861,15 @@ async function removeBucket() {
       ok-text="开始上传"
       @confirm="confirmUpload"
     >
-      <p v-if="uploadPlan">
-        将上传 <b>{{ uploadPlan.files.length }}</b> 个文件到
+       <p v-if="uploadPlan">
+         将上传 <b>{{ uploadPlan.files.length }}</b> 个文件到
         <b>{{ store.browse.prefix || "桶根目录" }}</b>
-        ，共 {{ formatBytes(uploadPlan.total_bytes) }}。
-      </p>
-      <p class="warn-text">注意：同名对象将被覆盖。</p>
+         ，共 {{ formatBytes(uploadPlan.total_bytes) }}。
+       </p>
+       <p v-if="uploadPlan?.empty_folders.length">另将创建 {{ uploadPlan.empty_folders.length }} 个空文件夹。</p>
+       <p v-if="uploadPlan?.skipped">将跳过 {{ uploadPlan.skipped }} 个大小未变化的文件。</p>
+       <p class="warn-text">注意：同名对象将被覆盖。</p>
+       <label class="upload-storage"><input v-model="uploadChangesOnly" type="checkbox" @change="refreshUploadPlan" /> 仅上传新增 / 变更文件</label>
       <label class="upload-storage">存储类别
         <select v-model="uploadStorageClass" class="select">
           <option value="STANDARD">STANDARD</option>

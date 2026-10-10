@@ -15,7 +15,7 @@ use easys3_core::preview::PreviewData;
 use easys3_core::resume::{ResumePart, ResumeTask, ResumeUploadFile};
 use easys3_core::settings::{save_settings, TransferSettings};
 use easys3_core::sync::SyncPlan;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -1362,17 +1362,19 @@ pub async fn list_multipart_parts(
         .map_err(|e| e.to_string())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct PlannedFile {
     pub path: String,
     pub key: String,
     pub size: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct UploadPlan {
     pub files: Vec<PlannedFile>,
     pub total_bytes: u64,
+    pub skipped: usize,
+    pub empty_folders: Vec<String>,
 }
 
 /// 上传前规划：递归收集文件并统计大小，供前端确认框展示
@@ -1397,6 +1399,46 @@ pub fn plan_upload(paths: Vec<String>, prefix: String) -> Result<UploadPlan, Str
     Ok(UploadPlan {
         files: planned,
         total_bytes: total,
+        skipped: 0,
+        empty_folders: easys3_core::plan::collect_empty_folders(&path_bufs, &prefix),
+    })
+}
+
+#[tauri::command]
+pub async fn plan_upload_changes(
+    state: State<'_, App>,
+    bucket: String,
+    paths: Vec<String>,
+    prefix: String,
+) -> Result<UploadPlan, String> {
+    let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let files = collect_upload_files(&path_bufs, &prefix);
+    let (client, _) = state.current_control_client()?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let remote = easys3_core::list::collect_prefix_sizes(&client, &bucket, &prefix, &cancel)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut planned = Vec::new();
+    let mut total = 0;
+    let mut skipped = 0;
+    for (path, key) in files {
+        let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        if remote.get(&key) == Some(&size) {
+            skipped += 1;
+        } else {
+            total += size;
+            planned.push(PlannedFile {
+                path: path.to_string_lossy().into_owned(),
+                key,
+                size,
+            });
+        }
+    }
+    Ok(UploadPlan {
+        files: planned,
+        total_bytes: total,
+        skipped,
+        empty_folders: easys3_core::plan::collect_empty_folders(&path_bufs, &prefix),
     })
 }
 
@@ -1516,6 +1558,80 @@ pub fn start_upload(
         Some(checkpoints),
         None,
         Some(completed),
+    );
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn start_upload_plan(
+    state: State<'_, App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    plan: UploadPlan,
+    storage: Option<String>,
+) -> Result<String, String> {
+    require_writable(&state)?;
+    let files: Vec<_> = plan
+        .files
+        .iter()
+        .map(|file| (PathBuf::from(&file.path), file.key.clone()))
+        .collect();
+    if files.is_empty() && plan.empty_folders.is_empty() {
+        return Err("没有需要上传的文件".to_string());
+    }
+    let (client, _) = state.current_client()?;
+    if !plan.empty_folders.is_empty() {
+        easys3_core::object::create_empty_folders(&client, &bucket, &plan.empty_folders)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    if files.is_empty() {
+        return Ok(String::new());
+    }
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut info = tasks::new_task_info(
+        &id,
+        TaskKind::Upload,
+        &bucket,
+        files.len() + plan.empty_folders.len(),
+        tasks::upload_files_size(&files),
+    );
+    info.files_done = plan.empty_folders.len();
+    info.files_skipped = plan.skipped;
+    let shared = TaskShared::new(info);
+    let retry = Arc::new(Mutex::new(Some(RetryJob::Upload {
+        client: client.clone(),
+        bucket: bucket.clone(),
+        files: files.clone(),
+    })));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry,
+        },
+    );
+    let class = storage
+        .as_deref()
+        .filter(|value| !value.is_empty() && *value != "STANDARD")
+        .map(str::parse)
+        .transpose()
+        .map_err(|_| "不支持的存储类别".to_string())?;
+    tasks::spawn_upload(
+        app,
+        client,
+        bucket,
+        files,
+        cancel,
+        shared,
+        class,
+        state.transfer_settings(),
+        state.upload_throttle.clone(),
+        None,
+        None,
+        None,
     );
     Ok(id)
 }

@@ -27,6 +27,42 @@ pub fn collect_upload_files(paths: &[PathBuf], prefix: &str) -> Vec<PlannedUploa
     out
 }
 
+/// 收集空目录对应的 0 字节占位对象 key；非空目录由其中的文件隐式表现。
+pub fn collect_empty_folders(paths: &[PathBuf], prefix: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for path in paths {
+        if fs::metadata(path).is_ok_and(|meta| meta.is_dir()) {
+            walk_empty_dirs(path, path, prefix, &mut out);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn walk_empty_dirs(dir: &Path, base: &Path, prefix: &str, out: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let entries: Vec<_> = entries.flatten().collect();
+    if entries.is_empty() {
+        let rel = dir.strip_prefix(base).unwrap_or(dir);
+        if !rel.as_os_str().is_empty() {
+            let key = rel
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            out.push(format!("{}/", join_key(prefix, &key)));
+        }
+    }
+    for entry in entries {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            walk_empty_dirs(&entry.path(), base, prefix, out);
+        }
+    }
+}
+
 fn walk_dir(dir: &Path, base: &Path, prefix: &str, out: &mut Vec<PlannedUpload>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for entry in rd.flatten() {
@@ -188,5 +224,15 @@ mod tests {
         assert!(keys.contains(&"top/sub/b.log"));
         assert!(keys.contains(&"top/sub/deep/中文 文件.csv"));
         assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn collect_empty_folders_uses_placeholder_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("empty")).unwrap();
+        fs::create_dir_all(dir.path().join("nested/also-empty")).unwrap();
+        let keys = collect_empty_folders(&[dir.path().to_path_buf()], "p/");
+        assert!(keys.contains(&"p/empty/".to_string()));
+        assert!(keys.contains(&"p/nested/also-empty/".to_string()));
     }
 }
