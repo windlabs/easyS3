@@ -587,6 +587,11 @@ async function openFile(entry: Entry) {
   }
 }
 
+async function openBrowserWindow() {
+  try { await api.openBrowserWindow(); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
 async function exportConnectionConfig() {
   if (includeExportSecrets.value && !confirm("导出文件将包含可用凭据，请妥善保管，是否继续？")) return;
   const path = await (await import("@tauri-apps/plugin-dialog")).save({ title: "导出连接配置", defaultPath: "easyS3-connections.json" });
@@ -782,7 +787,8 @@ async function removeBucket() {
             @show-buckets="store.backToBuckets()"
           />
           <div v-else class="bucket-label">桶列表</div>
-          <div class="spacer" />
+            <div class="spacer" />
+            <button class="btn" @click="openBrowserWindow">新窗口</button>
           <template v-if="store.browse.mode === 'objects'">
             <input
               class="input filter"

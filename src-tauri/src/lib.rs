@@ -19,6 +19,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::open_browser_window,
             commands::export_connections,
             commands::import_connections,
             commands::import_aws_profiles,

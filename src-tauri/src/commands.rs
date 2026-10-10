@@ -102,6 +102,19 @@ pub fn get_state(state: State<App>) -> StateDto {
 }
 
 #[tauri::command]
+pub fn open_browser_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+    let label = format!("browser-{}", Uuid::new_v4());
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::App("index.html".into()))
+        .title("easyS3")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(960.0, 600.0)
+        .build()
+        .map(|_| ())
+        .map_err(|e| format!("打开新窗口失败：{e}"))
+}
+
+#[tauri::command]
 pub fn export_connections(
     state: State<App>,
     path: String,
