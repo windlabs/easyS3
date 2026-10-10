@@ -166,6 +166,10 @@
 
 - 上传确认支持可选上传后 ETag 回读校验；对象详情提供 Content-Type 与自定义元数据编辑。编辑采用服务端原地 CopyObject，不下载对象体；超过 5GB 明确提示不支持。
 
+## P1-19 图片缩略图 / 网格视图（2026-10）
+
+- 对象列表可切换表格与网格视图，偏好本地记忆。网格中图片对象按需加载缩略图并在当前会话缓存；非图片/加载失败/超出安全预览上限显示类型图标，不读取超大完整图片。
+
 ## 分发与平台
 
 - 目标平台：**Windows、Linux、macOS 三端**（Windows NSIS、Linux AppImage + deb、macOS dmg，覆盖 Intel 与 Apple Silicon）。

@@ -1057,6 +1057,18 @@ pub async fn preview_object(
 }
 
 #[tauri::command]
+pub async fn thumbnail_object(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+) -> Result<PreviewData, String> {
+    let (client, _) = state.current_control_client()?;
+    easys3_core::preview::thumbnail_object(&client, &bucket, &key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn is_download_directory(dest: String) -> bool {
     std::path::Path::new(&dest).is_dir()
 }

@@ -1,10 +1,22 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import * as api from "../api";
 import type { Entry, FsItem } from "../types";
 import { formatBytes, formatTime } from "../utils";
 import { selection } from "../store";
 
-const props = defineProps<{ entries: Entry[]; loading: boolean; hasMore: boolean }>();
+const props = defineProps<{ entries: Entry[]; loading: boolean; hasMore: boolean; grid?: boolean; bucket?: string }>();
+const thumbnails = ref<Record<string, string>>({});
+const pending = new Set<string>();
+function imageKey(name: string) { return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name); }
+async function loadThumbnail(entry: Entry) {
+  if (!props.bucket || !imageKey(entry.name) || thumbnails.value[entry.key] || pending.has(entry.key)) return;
+  pending.add(entry.key);
+  try { const data = await api.thumbnailObject(props.bucket, entry.key); if (data.kind === "image") thumbnails.value[entry.key] = `data:${data.mime};base64,${data.data_base64}`; }
+  catch { thumbnails.value[entry.key] = ""; }
+  finally { pending.delete(entry.key); }
+}
+watch(() => props.entries, () => { thumbnails.value = {}; pending.clear(); });
 
 const emit = defineEmits<{
   open: [entry: Entry];
@@ -98,6 +110,13 @@ function onScroll() {
 </script>
 
 <template>
+  <div v-if="grid" class="grid-wrap">
+    <div v-for="e in sorted" :key="e.key" class="grid-item" :class="{ selected: selection.has(e.key) }" @click="toggle(e)">
+      <div class="grid-thumb"><img v-if="thumbnails[e.key]" :src="thumbnails[e.key]" /><button v-else-if="!e.is_dir && imageKey(e.name)" class="thumb-load" @click.stop="loadThumbnail(e)">加载缩略图</button><span v-else>{{ e.is_dir ? "📁" : "📄" }}</span></div>
+      <div class="grid-name" :title="e.name">{{ e.name }}</div>
+      <div class="muted">{{ e.is_dir ? "文件夹" : formatBytes(e.size) }}</div>
+    </div>
+  </div>
   <div ref="wrap" class="table-wrap" @scroll.passive="onScroll">
     <table class="obj-table">
       <thead>
@@ -261,5 +280,12 @@ function onScroll() {
   padding: 10px 0;
 }
 .virtual-spacer td { padding: 0; border: 0; }
+.grid-wrap { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 16px; overflow: auto; }
+.grid-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; min-width: 0; }
+.grid-item.selected, .grid-item:hover { border-color: var(--primary); background: var(--hover); }
+.grid-thumb { display: grid; height: 100px; place-items: center; font-size: 44px; background: var(--header-bg); border-radius: 6px; }
+.grid-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.thumb-load { border: 0; background: transparent; color: var(--primary); cursor: pointer; }
+.grid-name { margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .column-toggle { margin: 6px 10px; }
 </style>

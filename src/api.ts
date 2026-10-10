@@ -52,6 +52,7 @@ export const startZipDownload = (bucket: string, items: FsItem[], dest: string) 
 export const startSearch = (bucket: string | null, query: string) => invoke<string>("start_search", { bucket, query });
 export const previewObject = (bucket: string, key: string) =>
   invoke<PreviewData>("preview_object", { bucket, key });
+export const thumbnailObject = (bucket: string, key: string) => invoke<PreviewData>("thumbnail_object", { bucket, key });
 export const isDownloadDirectory = (dest: string) =>
   invoke<boolean>("is_download_directory", { dest });
 export const presignGet = (bucket: string, keys: string[], seconds: number) =>

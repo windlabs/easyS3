@@ -137,6 +137,18 @@ pub async fn preview_object(
     }
 }
 
+/// 网格缩略图复用安全图片预览限制；非图片/超限返回普通预览错误，不读取完整大对象。
+pub async fn thumbnail_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<PreviewData, CoreError> {
+    match preview_object(client, bucket, key, 20 * 1024 * 1024).await? {
+        data @ PreviewData::Image { .. } => Ok(data),
+        _ => Err(CoreError::Other("该对象不是可生成缩略图的图片".into())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

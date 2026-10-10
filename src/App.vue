@@ -876,6 +876,7 @@ async function removeBucket() {
           :loading="store.browse.loading"
           :has-more="!!store.browse.nextToken"
           :grid="gridView"
+          :bucket="store.browse.bucket"
           @open="store.openEntry"
            @preview="preview"
            @detail="detail"
