@@ -7,6 +7,7 @@ const props = defineProps<{
   themeMode: ThemeMode;
   rememberDownloadDir: boolean;
   lastDownloadDir: string;
+  taskNotifications: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -16,6 +17,7 @@ const emit = defineEmits<{
   clearDownloadDir: [];
   openTransferSettings: [];
   manageConnections: [];
+  setTaskNotifications: [value: boolean];
 }>();
 
 const open = ref(false);
@@ -213,6 +215,7 @@ onBeforeUnmount(() => {
       <button class="menu-item" type="button" role="menuitem" @click="manageConnections">
         <span class="menu-check" aria-hidden="true" />导入 / 导出连接…
       </button>
+      <button class="menu-item" type="button" role="menuitemcheckbox" :aria-checked="taskNotifications" @click="emit('setTaskNotifications', !taskNotifications)"><span class="menu-check">{{ taskNotifications ? "✓" : "" }}</span>任务完成通知</button>
     </div>
   </div>
 </template>

@@ -11,10 +11,32 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            use tauri::Manager;
+            use tauri::{
+                menu::{Menu, MenuItem},
+                tray::TrayIconBuilder,
+                Manager,
+            };
             let app_state = state::App::init(app.handle());
             app.manage(app_state);
+            let show = MenuItem::with_id(app, "tray-show", "显示窗口", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "tray-quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            TrayIconBuilder::new()
+                .menu(&menu)
+                .tooltip("easyS3")
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "tray-show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "tray-quit" => { if let Some(window) = app.get_webview_window("main") { let _ = window.close(); } },
+                    _ => {}
+                })
+                .build(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

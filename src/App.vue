@@ -715,6 +715,8 @@ async function removeBucket() {
         @clear-download-dir="clearLastDownloadDir"
         @open-transfer-settings="showSettings = true"
         @manage-connections="showConnectionTransfer = true"
+        :task-notifications="store.notifyOnTaskFinish.enabled"
+        @set-task-notifications="store.setNotifyOnTaskFinish"
       />
     </header>
 

@@ -1,5 +1,6 @@
 import { reactive } from "vue";
 import { listen } from "@tauri-apps/api/event";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import * as api from "./api";
 import type { Entry, ConnectionConfig, TaskInfo, ResumableTaskInfo } from "./types";
 import { errorMessage } from "./utils";
@@ -42,6 +43,12 @@ export const tasksStore = reactive({
   hovered: false,
   resumable: [] as ResumableTaskInfo[],
 });
+export const notifyOnTaskFinish = reactive({ enabled: localStorage.getItem("easys3.notify-tasks") !== "false" });
+export function setNotifyOnTaskFinish(enabled: boolean) { notifyOnTaskFinish.enabled = enabled; localStorage.setItem("easys3.notify-tasks", String(enabled)); }
+async function notifyTaskFinish(task: TaskInfo) {
+  if (!notifyOnTaskFinish.enabled || (task.status !== "done" && task.status !== "failed")) return;
+  try { if (!await isPermissionGranted()) await requestPermission(); if (await isPermissionGranted()) sendNotification({ title: "easyS3 任务", body: task.status === "done" ? `${task.kind} 已完成` : `${task.kind} 失败，请查看任务中心` }); } catch { /* 通知不可用不影响任务 */ }
+}
 
 // 全部任务成功结束后，任务中心自动收起的延时（毫秒）
 const TASKS_AUTO_CLOSE_MS = 5000;
@@ -231,6 +238,7 @@ export async function initTasks() {
     ) {
       void refresh();
     }
+    if (!isNew) void notifyTaskFinish(t);
     maybeScheduleTasksAutoClose();
   });
 }
