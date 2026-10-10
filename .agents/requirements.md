@@ -162,6 +162,10 @@
 - 配置菜单提供手动检查更新入口，使用 Tauri updater；发现更新后下载并交由安装器安装。更新端点与签名由打包配置或部署环境提供，支持内网更新源。
 - 检查、下载、签名校验或安装失败须显示明确提示，不能影响当前版本继续使用。
 
+## P1-20 Content-Type / 自定义元数据编辑（2026-10）
+
+- 上传确认支持可选上传后 ETag 回读校验；对象详情提供 Content-Type 与自定义元数据编辑。编辑采用服务端原地 CopyObject，不下载对象体；超过 5GB 明确提示不支持。
+
 ## 分发与平台
 
 - 目标平台：**Windows、Linux、macOS 三端**（Windows NSIS、Linux AppImage + deb、macOS dmg，覆盖 Intel 与 Apple Silicon）。

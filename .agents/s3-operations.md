@@ -157,3 +157,8 @@
 
 - 下载完成后，对单部件对象的 32 位 ETag 计算本地 MD5 并比对；不一致时任务失败且保留已下载文件以便排查。multipart 复合 ETag（含 `-`）不代表整体 MD5，明确跳过校验。
 - 上传后的回读校验目前仅支持单部件 ETag；分片复合 ETag 跳过并在界面说明。
+
+## 19. Content-Type 与自定义元数据编辑（P1-20）
+
+- 对象详情可编辑 Content-Type 与 `x-amz-meta-*` 自定义键值；保存用 CopyObject 原地复制并设置 `metadata_directive=REPLACE`。
+- CopyObject 单请求超过 5GB 时必须明确拒绝；失败按通用分类提示。编辑不修改对象体。

@@ -88,6 +88,8 @@ const presignMode = ref<"get" | "put">("get");
 const presignSeconds = ref(3600);
 const presignKey = ref("");
 const presignUrls = ref<string[]>([]);
+const gridView = ref(localStorage.getItem("easys3.grid-view") === "true");
+function toggleGridView() { gridView.value = !gridView.value; localStorage.setItem("easys3.grid-view", String(gridView.value)); }
 const showCommandPalette = ref(false);
 const updateMessage = ref("");
 const commandQuery = ref("");
@@ -830,7 +832,8 @@ async function removeBucket() {
               :value="store.browse.filter"
               @input="onFilterInput"
             />
-             <button class="btn" @click="showSearch = true">全局搜索</button>
+              <button class="btn" @click="showSearch = true">全局搜索</button>
+              <button class="btn" @click="toggleGridView">{{ gridView ? "表格视图" : "网格视图" }}</button>
               <button v-if="!isReadOnly" class="btn" @click="pickUpload(false)">上传文件</button>
                <button v-if="!isReadOnly" class="btn" @click="pickUpload(true)">上传文件夹</button>
                <button v-if="!isReadOnly" class="btn" @click="openSync('upload')">同步到 S3</button>
@@ -872,6 +875,7 @@ async function removeBucket() {
           :entries="store.browse.entries"
           :loading="store.browse.loading"
           :has-more="!!store.browse.nextToken"
+          :grid="gridView"
           @open="store.openEntry"
            @preview="preview"
            @detail="detail"

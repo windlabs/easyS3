@@ -15,6 +15,9 @@ const tags = ref<ObjectTag[]>([]);
 const acl = ref<ObjectAclInfo | null>(null);
 const accessError = ref("");
 const accessLoaded = ref(false);
+const editingMetadata = ref(false);
+const editContentType = ref("");
+const editMetadata = ref<ObjectTag[]>([]);
 
 watch(() => [props.modelValue, props.detail?.key] as const, ([open]) => {
   if (!open) { versions.value = []; versionsError.value = ""; }
@@ -50,6 +53,8 @@ async function saveTags() {
   try { await api.saveObjectTags(props.bucket, props.detail.key, tags.value); await loadAccess(); }
   catch (e) { accessError.value = e instanceof Error ? e.message : String(e); }
 }
+function beginMetadataEdit() { if (!props.detail) return; editContentType.value = props.detail.content_type || "application/octet-stream"; editMetadata.value = props.detail.metadata.map((item) => ({ key: item.key, value: item.value })); editingMetadata.value = true; }
+async function saveMetadata() { if (!props.detail) return; try { await api.replaceObjectMetadata(props.bucket, props.detail.key, editContentType.value, editMetadata.value); editingMetadata.value = false; emit("update:modelValue", false); } catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); } }
 </script>
 
 <template>
@@ -65,6 +70,8 @@ async function saveTags() {
           <dt>存储类别</dt><dd>{{ detail.storage_class || "STANDARD" }}</dd>
           <dt>Content-Type</dt><dd>{{ detail.content_type || "—" }}</dd>
         </dl>
+        <div class="meta-title version-head"><span>对象元数据</span><button class="btn sm" @click="beginMetadataEdit">编辑</button></div>
+        <div v-if="editingMetadata" class="access-panel"><label class="tag-row"><span>Content-Type</span><input v-model="editContentType" class="input" /></label><div v-for="(item, index) in editMetadata" :key="index" class="tag-row"><input v-model="item.key" class="input" placeholder="x-amz-meta-* 名称" /><input v-model="item.value" class="input" placeholder="值" /><button class="btn sm" @click="editMetadata.splice(index, 1)">删除</button></div><div class="tag-actions"><button class="btn sm" @click="editMetadata.push({ key: '', value: '' })">新增元数据</button><button class="btn sm primary" @click="saveMetadata">保存</button></div></div>
         <div v-if="detail.metadata.length" class="meta-title">自定义元数据</div>
         <dl v-if="detail.metadata.length">
           <template v-for="item in detail.metadata" :key="item.key">

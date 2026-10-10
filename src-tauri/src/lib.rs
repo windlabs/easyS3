@@ -34,7 +34,11 @@ pub fn run() {
                             let _ = window.set_focus();
                         }
                     }
-                    "tray-quit" => { if let Some(window) = app.get_webview_window("main") { let _ = window.close(); } },
+                    "tray-quit" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.close();
+                        }
+                    }
                     _ => {}
                 })
                 .build(app)?;
@@ -77,6 +81,7 @@ pub fn run() {
             commands::save_object_tags,
             commands::object_acl,
             commands::restore_object_version,
+            commands::replace_object_metadata,
             commands::create_folder,
             commands::start_copy,
             commands::list_multipart_uploads,

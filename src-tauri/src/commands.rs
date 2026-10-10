@@ -247,6 +247,7 @@ pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
                 secret_key: values.get("aws_secret_access_key")?.clone(),
                 force_path_style: false,
                 read_only: false,
+                proxy: None,
                 default_bucket: None,
                 ca_cert_path: None,
                 last_test: None,
@@ -1256,6 +1257,25 @@ pub async fn restore_object_version(
     require_writable(&state)?;
     let (client, _) = state.current_client()?;
     easys3_core::object::restore_object_version(&client, &bucket, &key, &version)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn replace_object_metadata(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    content_type: String,
+    metadata: Vec<easys3_core::object::ObjectTag>,
+) -> Result<(), String> {
+    require_writable(&state)?;
+    let (client, _) = state.current_client()?;
+    let pairs = metadata
+        .into_iter()
+        .map(|item| (item.key, item.value))
+        .collect::<Vec<_>>();
+    easys3_core::object::replace_object_metadata(&client, &bucket, &key, &content_type, &pairs)
         .await
         .map_err(|e| e.to_string())
 }

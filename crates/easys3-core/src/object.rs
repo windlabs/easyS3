@@ -473,6 +473,50 @@ pub async fn copy_object(
     Ok(CopyOutcome::Copied)
 }
 
+/// 以 CopyObject 原地替换 Content-Type 与自定义元数据；S3 单请求 Copy 上限 5GB。
+pub async fn replace_object_metadata(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    content_type: &str,
+    metadata: &[(String, String)],
+) -> Result<(), CoreError> {
+    let head = client
+        .head_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    if head.content_length().unwrap_or(0) > COPY_MAX_BYTES {
+        return Err(CoreError::Other(
+            "对象超过 5GB，暂不支持原地编辑元数据".into(),
+        ));
+    }
+    if content_type.trim().is_empty() {
+        return Err(CoreError::Other("Content-Type 不能为空".into()));
+    }
+    let mut map = std::collections::HashMap::new();
+    for (name, value) in metadata {
+        if name.trim().is_empty() {
+            return Err(CoreError::Other("自定义元数据名称不能为空".into()));
+        }
+        map.insert(name.trim().to_string(), value.clone());
+    }
+    client
+        .copy_object()
+        .bucket(bucket)
+        .key(key)
+        .copy_source(copy_source(bucket, key))
+        .metadata_directive(aws_sdk_s3::types::MetadataDirective::Replace)
+        .content_type(content_type.trim())
+        .set_metadata(Some(map))
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
 pub async fn list_multipart_uploads(
     client: &Client,
     bucket: &str,
