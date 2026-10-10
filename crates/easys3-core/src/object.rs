@@ -59,6 +59,77 @@ pub struct ObjectAclInfo {
     pub grants: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BucketVersioningInfo {
+    pub status: String,
+}
+
+pub async fn create_bucket(client: &Client, bucket: &str) -> Result<(), CoreError> {
+    if !crate::config::is_valid_bucket_name(bucket) {
+        return Err(CoreError::Other(
+            "桶名不符合规范（3–63 位小写字母、数字、点或连字符）".into(),
+        ));
+    }
+    client
+        .create_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
+pub async fn delete_bucket(client: &Client, bucket: &str) -> Result<(), CoreError> {
+    client
+        .delete_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
+pub async fn bucket_versioning(
+    client: &Client,
+    bucket: &str,
+) -> Result<BucketVersioningInfo, CoreError> {
+    let out = client
+        .get_bucket_versioning()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(BucketVersioningInfo {
+        status: out
+            .status()
+            .map(|status| status.as_str().to_owned())
+            .unwrap_or_else(|| "Suspended".into()),
+    })
+}
+
+pub async fn set_bucket_versioning(
+    client: &Client,
+    bucket: &str,
+    enabled: bool,
+) -> Result<(), CoreError> {
+    let status = if enabled {
+        aws_sdk_s3::types::BucketVersioningStatus::Enabled
+    } else {
+        aws_sdk_s3::types::BucketVersioningStatus::Suspended
+    };
+    let configuration = aws_sdk_s3::types::VersioningConfiguration::builder()
+        .status(status)
+        .build();
+    client
+        .put_bucket_versioning()
+        .bucket(bucket)
+        .versioning_configuration(configuration)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
 pub async fn get_object_tags(
     client: &Client,
     bucket: &str,

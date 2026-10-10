@@ -54,6 +54,11 @@ const previewName = ref("");
 const showObjectDetail = ref(false);
 const objectDetail = ref<import("./types").ObjectDetail | null>(null);
 const showSettings = ref(false);
+const newBucketName = ref("");
+const showBucketDialog = ref(false);
+const showBucketManage = ref(false);
+const managedBucket = ref("");
+const bucketVersionStatus = ref("");
 const showPresign = ref(false);
 const presignMode = ref<"get" | "put">("get");
 const presignSeconds = ref(3600);
@@ -529,6 +534,28 @@ async function openFile(entry: Entry) {
     store.toast(errorMessage(e), "error");
   }
 }
+
+async function createBucket() {
+  const name = newBucketName.value.trim();
+  if (!name) return;
+  try { await api.createBucket(name); showBucketDialog.value = false; newBucketName.value = ""; await store.refresh(); store.toast("桶已创建"); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+async function manageBucket(bucket: string) {
+  managedBucket.value = bucket; bucketVersionStatus.value = "加载中…"; showBucketManage.value = true;
+  try { bucketVersionStatus.value = (await api.bucketVersioning(bucket)).status; }
+  catch (e) { bucketVersionStatus.value = errorMessage(e); }
+}
+async function toggleBucketVersioning() {
+  const enabled = bucketVersionStatus.value !== "Enabled";
+  try { await api.setBucketVersioning(managedBucket.value, enabled); bucketVersionStatus.value = enabled ? "Enabled" : "Suspended"; store.toast(enabled ? "已开启版本控制" : "已暂停版本控制"); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+async function removeBucket() {
+  if (!confirm(`确认删除桶“${managedBucket.value}”？桶必须为空，此操作不可恢复。`)) return;
+  try { await api.deleteBucket(managedBucket.value); showBucketManage.value = false; await store.refresh(); store.toast("桶已删除"); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
 </script>
 
 <template>
@@ -580,7 +607,7 @@ async function openFile(entry: Entry) {
           </div>
         </div>
         <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
-          <div class="bucket-title">桶列表</div>
+          <div class="bucket-title">桶列表 <button class="btn sm" @click="showBucketDialog = true">新建桶</button></div>
           <div v-if="store.browse.loading" class="muted pad">加载中…</div>
           <template v-else>
             <div v-if="!store.browse.buckets.length" class="muted pad">
@@ -593,7 +620,7 @@ async function openFile(entry: Entry) {
               :title="b"
               @click="store.selectBucket(b)"
             >
-              <span class="bucket-icon">🪣</span>{{ b }}
+              <span class="bucket-icon">🪣</span>{{ b }}<button class="btn sm bucket-manage" @click.stop="manageBucket(b)">管理</button>
             </a>
           </template>
         </div>
@@ -763,6 +790,9 @@ async function openFile(entry: Entry) {
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
 
+    <div v-if="showBucketDialog" class="modal-mask"><div class="modal small-modal"><div class="modal-head">新建桶</div><div class="modal-body"><input v-model="newBucketName" class="input" placeholder="桶名（3–63 位小写字母、数字、点或连字符）" @keyup.enter="createBucket" /></div><div class="modal-foot"><button class="btn" @click="showBucketDialog = false">取消</button><button class="btn primary" @click="createBucket">创建</button></div></div></div>
+    <div v-if="showBucketManage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶管理：{{ managedBucket }}</div><div class="modal-body copy-form"><p>版本控制：<b>{{ bucketVersionStatus }}</b></p><p class="copy-hint">删除桶前必须清空桶内对象。</p></div><div class="modal-foot"><button class="btn" @click="showBucketManage = false">关闭</button><button class="btn" :disabled="bucketVersionStatus === '加载中…'" @click="toggleBucketVersioning">{{ bucketVersionStatus === 'Enabled' ? '暂停版本控制' : '开启版本控制' }}</button><button class="btn danger" @click="removeBucket">删除桶</button></div></div></div>
+
     <div v-if="showPresign" class="modal-mask">
       <div class="modal presign-modal">
         <div class="modal-head">生成{{ presignMode === "get" ? "下载" : "上传" }}链接</div>
@@ -907,6 +937,8 @@ async function openFile(entry: Entry) {
   color: var(--muted);
   margin-bottom: 8px;
 }
+.bucket-title { display: flex; align-items: center; justify-content: space-between; }
+.bucket-manage { margin-left: auto; }
 .bucket-list .pad {
   padding: 4px 0;
 }

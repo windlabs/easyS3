@@ -54,6 +54,7 @@ export interface ObjectVersionInfo {
 }
 export interface ObjectTag { key: string; value: string; }
 export interface ObjectAclInfo { owner: string | null; grants: string[]; }
+export interface BucketVersioningInfo { status: string; }
 
 export interface MultipartUploadInfo {
   key: string;

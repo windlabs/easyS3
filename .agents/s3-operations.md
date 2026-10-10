@@ -118,3 +118,8 @@
 - 使用 `GetObjectTagging` / `PutObjectTagging` 读取、替换对象标签；标签 key 非空，空标签集允许保存。
 - 使用 `GetObjectAcl` 只读展示所有者及授权，不提供 PUT ACL 等权限修改能力。
 - 标签和 ACL 的读取必须相互独立；某一接口权限不足时，仅展示该接口的分类错误，另一项继续可用。
+
+## 12. 桶管理与版本控制（P1-05）
+
+- 仅非限定单桶连接可调用 `CreateBucket` / `DeleteBucket` / `GetBucketVersioning` / `PutBucketVersioning`；限定单桶连接前后端均不提供或拒绝这些操作。
+- 删除桶必须在 UI 二次确认；仅服务端允许的空桶删除成功，非空/权限不足等失败按通用错误规范展示。

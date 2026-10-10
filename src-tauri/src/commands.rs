@@ -446,6 +446,53 @@ pub async fn list_buckets(state: State<'_, App>) -> Result<Vec<String>, String> 
         .map_err(|e| e.to_string())
 }
 
+fn reject_limited_connection(state: &App) -> Result<(), String> {
+    if state.current_connection()?.default_bucket.is_some() {
+        Err("限定单桶连接不支持此桶管理操作".to_string())
+    } else {
+        Ok(())
+    }
+}
+#[tauri::command]
+pub async fn create_bucket(state: State<'_, App>, bucket: String) -> Result<(), String> {
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::create_bucket(&client, &bucket)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn delete_bucket(state: State<'_, App>, bucket: String) -> Result<(), String> {
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::delete_bucket(&client, &bucket)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn bucket_versioning(
+    state: State<'_, App>,
+    bucket: String,
+) -> Result<easys3_core::object::BucketVersioningInfo, String> {
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::bucket_versioning(&client, &bucket)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn set_bucket_versioning(
+    state: State<'_, App>,
+    bucket: String,
+    enabled: bool,
+) -> Result<(), String> {
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::set_bucket_versioning(&client, &bucket, enabled)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn list_objects(
     state: State<'_, App>,

@@ -15,6 +15,7 @@ import type {
   ObjectVersionInfo,
   ObjectTag,
   ObjectAclInfo,
+  BucketVersioningInfo,
   ResumableTaskInfo,
 } from "./types";
 
@@ -30,6 +31,10 @@ export const testConnection = (connection: ConnectionConfig) =>
   invoke<void>("test_connection", { connection });
 
 export const listBuckets = () => invoke<string[]>("list_buckets");
+export const createBucket = (bucket: string) => invoke<void>("create_bucket", { bucket });
+export const deleteBucket = (bucket: string) => invoke<void>("delete_bucket", { bucket });
+export const bucketVersioning = (bucket: string) => invoke<BucketVersioningInfo>("bucket_versioning", { bucket });
+export const setBucketVersioning = (bucket: string, enabled: boolean) => invoke<void>("set_bucket_versioning", { bucket, enabled });
 export const listObjects = (bucket: string, prefix: string, token: string | null) =>
   invoke<ListResult>("list_objects", { bucket, prefix, token });
 export const countObjects = (bucket: string, prefix: string) =>
