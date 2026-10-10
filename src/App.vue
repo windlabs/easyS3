@@ -57,6 +57,11 @@ const previewName = ref("");
 const showObjectDetail = ref(false);
 const objectDetail = ref<import("./types").ObjectDetail | null>(null);
 const showSettings = ref(false);
+const showConnectionTransfer = ref(false);
+const includeExportSecrets = ref(false);
+const connectionTransferPassword = ref("");
+const importOverwrite = ref(false);
+const awsProfiles = ref<ConnectionConfig[]>([]);
 const showSearch = ref(false);
 const searchQuery = ref("");
 const searchAcrossBuckets = ref(false);
@@ -553,6 +558,29 @@ async function openFile(entry: Entry) {
   }
 }
 
+async function exportConnectionConfig() {
+  if (includeExportSecrets.value && !confirm("导出文件将包含可用凭据，请妥善保管，是否继续？")) return;
+  const path = await (await import("@tauri-apps/plugin-dialog")).save({ title: "导出连接配置", defaultPath: "easyS3-connections.json" });
+  if (!path) return;
+  try { await api.exportConnections(path, includeExportSecrets.value, includeExportSecrets.value ? connectionTransferPassword.value : null); store.toast("连接配置已导出"); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+async function importConnectionConfig() {
+  const path = await openDialog({ title: "导入连接配置", filters: [{ name: "JSON", extensions: ["json"] }] });
+  if (!path || Array.isArray(path)) return;
+  try { const count = await api.importConnections(path, importOverwrite.value, connectionTransferPassword.value || null); await store.refreshState(); store.toast(`已导入 ${count} 个连接`); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+async function loadAwsProfiles() {
+  try { awsProfiles.value = await api.importAwsProfiles(); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+async function saveAwsProfiles() {
+  let count = 0;
+  try { for (const profile of awsProfiles.value) { await api.saveConnection(profile); count++; } await store.refreshState(); store.toast(`已导入 ${count} 个 AWS profile`); awsProfiles.value = []; }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+
 async function runSearch() {
   searching.value = true; searchError.value = ""; searchResults.value = [];
   try {
@@ -632,6 +660,7 @@ async function removeBucket() {
         @change-download-dir="changeDownloadDir"
         @clear-download-dir="clearLastDownloadDir"
         @open-transfer-settings="showSettings = true"
+        @manage-connections="showConnectionTransfer = true"
       />
     </header>
 
@@ -852,6 +881,7 @@ async function removeBucket() {
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
+    <div v-if="showConnectionTransfer" class="modal-mask"><div class="modal transfer-modal"><div class="modal-head">导入 / 导出连接</div><div class="modal-body copy-form"><section><b>导出</b><label><input v-model="includeExportSecrets" type="checkbox" /> 包含凭据（默认脱敏，需妥善保管）</label><input v-if="includeExportSecrets" v-model="connectionTransferPassword" class="input" type="password" placeholder="含凭据导出密码（必填）" /><button class="btn" @click="exportConnectionConfig">导出到文件…</button></section><section><b>导入配置文件</b><input v-model="connectionTransferPassword" class="input" type="password" placeholder="如导入文件加密，请输入密码" /><label><input v-model="importOverwrite" type="checkbox" /> 同名连接覆盖（否则跳过）</label><button class="btn" @click="importConnectionConfig">选择文件导入…</button></section><section><b>AWS CLI profile</b><button class="btn" @click="loadAwsProfiles">读取 ~/.aws/credentials</button><div v-if="awsProfiles.length" class="aws-profiles"><div v-for="profile in awsProfiles" :key="profile.id">{{ profile.name }} · {{ profile.region }}</div><button class="btn primary" @click="saveAwsProfiles">导入全部 profile</button></div></section></div><div class="modal-foot"><button class="btn primary" @click="showConnectionTransfer = false">关闭</button></div></div></div>
 
     <div v-if="showSearch" class="modal-mask"><div class="modal search-modal"><div class="modal-head">全局搜索与高级过滤</div><div class="modal-body copy-form"><input v-model="searchQuery" class="input" placeholder="例如 size>10MB AND modified>30d AND class=GLACIER" @keyup.enter="runSearch" /><label><input v-model="searchAcrossBuckets" type="checkbox" /> 搜索当前连接的所有桶</label><p class="copy-hint">语法：size&gt;10MB、size&lt;1GB、modified&gt;30d、class=GLACIER；使用 AND 连接。</p><div v-if="searching" class="muted">正在分页搜索，可继续操作其他界面…</div><div v-if="searchError" class="version-error">{{ searchError }}</div><div v-if="searchResults.length" class="search-results"><button v-for="item in searchResults" :key="`${item.bucket}/${item.key}`" class="search-row" @click="jumpToSearch(item)"><b>{{ item.bucket }}</b><span>{{ item.key }}</span><span>{{ formatBytes(item.size) }}</span></button></div><div v-else-if="!searching && !searchError" class="muted">输入条件后搜索；空条件可列出范围内所有文件。</div></div><div class="modal-foot"><button class="btn" @click="showSearch = false">关闭</button><button class="btn primary" :disabled="searching" @click="runSearch">搜索</button></div></div></div>
 
@@ -1110,6 +1140,8 @@ async function removeBucket() {
 .search-row { width: 100%; display: grid; grid-template-columns: 130px 1fr 100px; text-align: left; gap: 8px; padding: 7px 0; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
 .search-row:hover { color: var(--primary); }
 .search-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-modal { width: min(620px, 94vw); }
+.transfer-modal section { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
 .break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }

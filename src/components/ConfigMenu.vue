@@ -15,6 +15,7 @@ const emit = defineEmits<{
   changeDownloadDir: [];
   clearDownloadDir: [];
   openTransferSettings: [];
+  manageConnections: [];
 }>();
 
 const open = ref(false);
@@ -77,6 +78,7 @@ function openTransferSettings() {
   emit("openTransferSettings");
   close();
 }
+function manageConnections() { emit("manageConnections"); close(); }
 
 function onDocumentPointerDown(event: PointerEvent) {
   if (open.value && root.value && !root.value.contains(event.target as Node)) close();
@@ -207,6 +209,9 @@ onBeforeUnmount(() => {
       <button class="menu-item" type="button" role="menuitem" @click="openTransferSettings">
         <span class="menu-check" aria-hidden="true" />
         传输设置…
+      </button>
+      <button class="menu-item" type="button" role="menuitem" @click="manageConnections">
+        <span class="menu-check" aria-hidden="true" />导入 / 导出连接…
       </button>
     </div>
   </div>

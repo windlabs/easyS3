@@ -58,6 +58,39 @@ pub struct ConnectionsFile {
     pub current_connection_id: Option<String>,
 }
 
+/// P1-09 可移植连接配置；默认不含凭据，含凭据导出由调用方显式选择。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionExport {
+    pub version: u32,
+    pub connections: Vec<ConnectionConfig>,
+}
+
+pub fn export_connections(
+    connections: &[ConnectionConfig],
+    include_secrets: bool,
+) -> Result<String, CoreError> {
+    let mut connections = connections.to_vec();
+    if !include_secrets {
+        for connection in &mut connections {
+            connection.secret_key.clear();
+        }
+    }
+    serde_json::to_string_pretty(&ConnectionExport {
+        version: 1,
+        connections,
+    })
+    .map_err(|e| CoreError::Other(format!("序列化导出配置失败：{e}")))
+}
+
+pub fn import_connections(text: &str) -> Result<Vec<ConnectionConfig>, CoreError> {
+    let export: ConnectionExport =
+        serde_json::from_str(text).map_err(|_| CoreError::Other("导入文件格式无效".into()))?;
+    if export.version != 1 {
+        return Err(CoreError::Other("不支持的导入文件版本".into()));
+    }
+    Ok(export.connections)
+}
+
 impl Default for ConnectionsFile {
     fn default() -> Self {
         ConnectionsFile {
@@ -353,5 +386,14 @@ mod tests {
                 "任一连接字段变更都应作废已持久化的测试结果"
             );
         }
+    }
+
+    #[test]
+    fn export_import_masks_secret_by_default() {
+        let text = export_connections(&[sample()], false).unwrap();
+        assert!(!text.contains("\"sk\""));
+        let imported = import_connections(&text).unwrap();
+        assert_eq!(imported.len(), 1);
+        assert!(imported[0].secret_key.is_empty());
     }
 }

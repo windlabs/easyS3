@@ -3,6 +3,11 @@
 
 use crate::state::{lock, App};
 use crate::tasks::{self, FsItem, RetryJob, TaskEntry, TaskInfo, TaskKind, TaskShared, TaskStatus};
+use aes_gcm::{
+    aead::{Aead, KeyInit, OsRng},
+    Aes256Gcm, Nonce,
+};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use easys3_core::config::{connection_fields_changed, validate_connection, ConnectionConfig};
 use easys3_core::list::ListResult;
 use easys3_core::plan::{collect_upload_files, item_matches_failure};
@@ -11,6 +16,8 @@ use easys3_core::resume::{ResumePart, ResumeTask, ResumeUploadFile};
 use easys3_core::settings::{save_settings, TransferSettings};
 use easys3_core::sync::SyncPlan;
 use serde::Serialize;
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -33,6 +40,54 @@ pub struct ResumableTaskInfo {
     pub created_at: u64,
 }
 
+fn transfer_cipher(password: &str, salt: &[u8]) -> Aes256Gcm {
+    let mut hash = Sha256::new();
+    hash.update(password.as_bytes());
+    hash.update(salt);
+    Aes256Gcm::new_from_slice(&hash.finalize()).expect("SHA-256 key length")
+}
+
+fn encrypt_export(text: &str, password: &str) -> Result<String, String> {
+    let mut salt = [0u8; 16];
+    let mut nonce = [0u8; 12];
+    rand::RngCore::fill_bytes(&mut OsRng, &mut salt);
+    rand::RngCore::fill_bytes(&mut OsRng, &mut nonce);
+    let encrypted = transfer_cipher(password, &salt)
+        .encrypt(Nonce::from_slice(&nonce), text.as_bytes())
+        .map_err(|_| "加密导出配置失败".to_string())?;
+    Ok(json!({"version": 1, "encrypted": true, "salt": STANDARD.encode(salt), "nonce": STANDARD.encode(nonce), "data": STANDARD.encode(encrypted)}).to_string())
+}
+
+fn decrypt_import(text: &str, password: Option<&str>) -> Result<String, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "导入文件格式无效".to_string())?;
+    if value.get("encrypted") != Some(&serde_json::Value::Bool(true)) {
+        return Ok(text.to_string());
+    }
+    let password = password
+        .filter(|value| !value.is_empty())
+        .ok_or("该配置文件含凭据，请输入导出密码")?;
+    let decode = |name: &str| -> Result<Vec<u8>, String> {
+        let encoded = value
+            .get(name)
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "加密配置文件格式无效".to_string())?;
+        STANDARD
+            .decode(encoded)
+            .map_err(|_| "加密配置文件编码无效".to_string())
+    };
+    let salt = decode("salt")?;
+    let nonce = decode("nonce")?;
+    let data = decode("data")?;
+    if salt.len() != 16 || nonce.len() != 12 {
+        return Err("加密配置文件参数无效".to_string());
+    }
+    let plain = transfer_cipher(password, &salt)
+        .decrypt(Nonce::from_slice(&nonce), data.as_ref())
+        .map_err(|_| "导出密码错误或配置文件已损坏".to_string())?;
+    String::from_utf8(plain).map_err(|_| "加密配置文件内容无效".to_string())
+}
+
 #[tauri::command]
 pub fn get_state(state: State<App>) -> StateDto {
     let inner = lock(&state.inner);
@@ -44,6 +99,146 @@ pub fn get_state(state: State<App>) -> StateDto {
         connections,
         current_connection_id: inner.file.current_connection_id.clone(),
     }
+}
+
+#[tauri::command]
+pub fn export_connections(
+    state: State<App>,
+    path: String,
+    secrets: bool,
+    password: Option<String>,
+) -> Result<(), String> {
+    let mut connections = lock(&state.inner).file.connections.clone();
+    if secrets {
+        for connection in &mut connections {
+            connection.secret_key = state.secrets.get(&connection.id)?.unwrap_or_default();
+        }
+    }
+    let text = easys3_core::config::export_connections(&connections, secrets)
+        .map_err(|e| e.to_string())?;
+    let text = if secrets {
+        encrypt_export(
+            &text,
+            password
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .ok_or("导出含凭据的配置必须设置密码")?,
+        )?
+    } else {
+        text
+    };
+    std::fs::write(path, text).map_err(|e| format!("导出连接配置失败：{e}"))
+}
+
+#[tauri::command]
+pub fn import_connections(
+    state: State<App>,
+    path: String,
+    overwrite: bool,
+    password: Option<String>,
+) -> Result<usize, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读取导入文件失败：{e}"))?;
+    let text = decrypt_import(&text, password.as_deref())?;
+    let incoming = easys3_core::config::import_connections(&text).map_err(|e| e.to_string())?;
+    let mut saved = 0;
+    {
+        let mut inner = lock(&state.inner);
+        for mut connection in incoming {
+            let position = inner
+                .file
+                .connections
+                .iter()
+                .position(|item| item.name == connection.name);
+            if position.is_some() && !overwrite {
+                continue;
+            }
+            if connection.id.is_empty() {
+                connection.id = Uuid::new_v4().to_string();
+            }
+            let secret = connection.secret_key.clone();
+            connection.secret_key.clear();
+            connection.last_test = None;
+            if !secret.is_empty() {
+                state.secrets.set(&connection.id, &secret)?;
+            }
+            match position {
+                Some(index) => inner.file.connections[index] = connection,
+                None => inner.file.connections.push(connection),
+            }
+            saved += 1;
+        }
+    }
+    state.save_file()?;
+    Ok(saved)
+}
+
+/// 读取 AWS CLI credentials/config 的 profile；不修改现有连接，交由前端确认后导入。
+#[tauri::command]
+pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
+    let home = std::env::var("HOME").map_err(|_| "无法确定用户主目录".to_string())?;
+    let text = std::fs::read_to_string(std::path::Path::new(&home).join(".aws/credentials"))
+        .map_err(|e| format!("读取 ~/.aws/credentials 失败：{e}"))?;
+    let mut profiles: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, String>,
+    > = Default::default();
+    let mut section = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].to_string();
+            profiles.entry(section.clone()).or_default();
+        } else if let Some((key, value)) = line.split_once('=') {
+            if !section.is_empty() {
+                profiles
+                    .entry(section.clone())
+                    .or_default()
+                    .insert(key.trim().to_string(), value.trim().to_string());
+            }
+        }
+    }
+    // ~/.aws/config 中的 profile 区域覆盖 credentials 内同名 region。
+    if let Ok(config) = std::fs::read_to_string(std::path::Path::new(&home).join(".aws/config")) {
+        let mut profile = String::new();
+        for line in config.lines() {
+            let line = line.trim();
+            if line.starts_with('[') && line.ends_with(']') {
+                profile = line[1..line.len() - 1]
+                    .trim_start_matches("profile ")
+                    .to_string();
+            } else if let Some(("region", value)) = line
+                .split_once('=')
+                .map(|(key, value)| (key.trim(), value.trim()))
+            {
+                if !profile.is_empty() {
+                    profiles
+                        .entry(profile.clone())
+                        .or_default()
+                        .insert("region".into(), value.into());
+                }
+            }
+        }
+    }
+    Ok(profiles
+        .into_iter()
+        .filter_map(|(name, values)| {
+            Some(ConnectionConfig {
+                id: Uuid::new_v4().to_string(),
+                name: format!("AWS {name}"),
+                endpoint_url: "https://s3.amazonaws.com".into(),
+                region: values
+                    .get("region")
+                    .cloned()
+                    .unwrap_or_else(|| "us-east-1".into()),
+                access_key: values.get("aws_access_key_id")?.clone(),
+                secret_key: values.get("aws_secret_access_key")?.clone(),
+                force_path_style: false,
+                default_bucket: None,
+                ca_cert_path: None,
+                last_test: None,
+            })
+        })
+        .collect())
 }
 
 #[tauri::command]

@@ -19,6 +19,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::export_connections,
+            commands::import_connections,
+            commands::import_aws_profiles,
             commands::get_resumable_tasks,
             commands::discard_resumable_task,
             commands::resume_task,

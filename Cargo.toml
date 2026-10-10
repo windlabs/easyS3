@@ -17,6 +17,7 @@ aws-sdk-s3 = "1"
 keyring = "3"
 aes-gcm = "0.10"
 rand = "0.8"
+sha2 = "0.10"
 
 [profile.release]
 lto = true
