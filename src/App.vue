@@ -24,6 +24,7 @@ import ConflictDialog from "./components/ConflictDialog.vue";
 import PreviewModal from "./components/PreviewModal.vue";
 import ObjectDetailModal from "./components/ObjectDetailModal.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
+import ConfigMenu from "./components/ConfigMenu.vue";
 import Toast from "./components/Toast.vue";
 
 // ---------- 连接对话框 ----------
@@ -81,6 +82,10 @@ function setTheme(mode: ThemeMode) {
   themeMode.value = mode;
   localStorage.setItem("easys3.theme", mode);
   applyTheme(mode);
+}
+
+function setRememberDownloadDir(value: boolean) {
+  rememberDownloadDir.value = value;
 }
 
 function clearLastDownloadDir() {
@@ -484,78 +489,81 @@ async function openFile(entry: Entry) {
 
 <template>
   <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">easyS3</div>
-      <div class="connection-box">
-        <select
-          class="select"
-          :value="store.app.currentConnectionId ?? ''"
-          @change="onConnectionSelect"
-        >
-          <option value="" disabled>选择连接…</option>
-          <option v-for="p in store.app.connections" :key="p.id" :value="p.id">
-            {{ p.name }}
-          </option>
-        </select>
-        <div class="connection-actions">
-          <button class="btn sm" @click="openConnectionDialog(null)">新建连接</button>
-          <button
-            class="btn sm"
-            :disabled="!store.app.currentConnectionId"
-            @click="openConnectionDialog(store.currentConnection())"
-          >
-            编辑
-          </button>
-          <button
-            class="btn sm"
-            :disabled="!store.app.currentConnectionId"
-            @click="copyConnection"
-          >
-            复制
-          </button>
-        </div>
-        <div class="preferences">
-          <label>主题
-            <select class="select" :value="themeMode" @change="setTheme(($event.target as HTMLSelectElement).value as ThemeMode)">
-              <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
-            </select>
-          </label>
-          <label class="remember-dir"><input v-model="rememberDownloadDir" type="checkbox" />记住下载目录</label>
-          <span v-if="lastDownloadDir" class="dir-name" :title="lastDownloadDir">{{ lastDownloadDir }}</span>
-          <button class="btn sm ghost" @click="changeDownloadDir">{{ lastDownloadDir ? "更换目录" : "设置下载目录" }}</button>
-          <button v-if="lastDownloadDir" class="btn sm ghost" @click="clearLastDownloadDir">清除</button>
-          <button class="btn sm ghost" @click="showSettings = true">传输设置</button>
-        </div>
-      </div>
-      <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
-        <div class="bucket-title">桶列表</div>
-        <div v-if="store.browse.loading" class="muted pad">加载中…</div>
-        <template v-else>
-          <div v-if="!store.browse.buckets.length" class="muted pad">
-            暂无桶。若账号无 ListBuckets 权限，可在连接设置中填写限定桶。
-          </div>
-          <a
-            v-for="b in store.browse.buckets"
-            :key="b"
-            class="bucket-item"
-            :title="b"
-            @click="store.selectBucket(b)"
-          >
-            <span class="bucket-icon">🪣</span>{{ b }}
-          </a>
-        </template>
-      </div>
-      <div
-        v-else-if="store.browse.mode === 'objects' && !store.currentConnection()?.default_bucket"
-        class="bucket-list"
-      >
-        <a class="bucket-item" title="返回桶列表" @click="store.backToBuckets()">
-          <span class="bucket-icon">⬅️</span>返回桶列表
-        </a>
-      </div>
-    </aside>
+    <header class="app-menu-bar">
+      <div class="app-brand">easyS3</div>
+      <div class="app-menu-spacer" />
+      <ConfigMenu
+        :theme-mode="themeMode"
+        :remember-download-dir="rememberDownloadDir"
+        :last-download-dir="lastDownloadDir"
+        @set-theme="setTheme"
+        @set-remember-download-dir="setRememberDownloadDir"
+        @change-download-dir="changeDownloadDir"
+        @clear-download-dir="clearLastDownloadDir"
+        @open-transfer-settings="showSettings = true"
+      />
+    </header>
 
-    <main class="main">
+    <div class="app-frame">
+      <aside class="sidebar">
+        <div class="connection-box">
+          <select
+            class="select"
+            :value="store.app.currentConnectionId ?? ''"
+            @change="onConnectionSelect"
+          >
+            <option value="" disabled>选择连接…</option>
+            <option v-for="p in store.app.connections" :key="p.id" :value="p.id">
+              {{ p.name }}
+            </option>
+          </select>
+          <div class="connection-actions">
+            <button class="btn sm" @click="openConnectionDialog(null)">新建连接</button>
+            <button
+              class="btn sm"
+              :disabled="!store.app.currentConnectionId"
+              @click="openConnectionDialog(store.currentConnection())"
+            >
+              编辑
+            </button>
+            <button
+              class="btn sm"
+              :disabled="!store.app.currentConnectionId"
+              @click="copyConnection"
+            >
+              复制
+            </button>
+          </div>
+        </div>
+        <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
+          <div class="bucket-title">桶列表</div>
+          <div v-if="store.browse.loading" class="muted pad">加载中…</div>
+          <template v-else>
+            <div v-if="!store.browse.buckets.length" class="muted pad">
+              暂无桶。若账号无 ListBuckets 权限，可在连接设置中填写限定桶。
+            </div>
+            <a
+              v-for="b in store.browse.buckets"
+              :key="b"
+              class="bucket-item"
+              :title="b"
+              @click="store.selectBucket(b)"
+            >
+              <span class="bucket-icon">🪣</span>{{ b }}
+            </a>
+          </template>
+        </div>
+        <div
+          v-else-if="store.browse.mode === 'objects' && !store.currentConnection()?.default_bucket"
+          class="bucket-list"
+        >
+          <a class="bucket-item" title="返回桶列表" @click="store.backToBuckets()">
+            <span class="bucket-icon">⬅️</span>返回桶列表
+          </a>
+        </div>
+      </aside>
+
+      <main class="main">
       <div v-if="!store.app.loaded" class="center muted">加载中…</div>
 
       <div v-else-if="!store.app.connections.length" class="center">
@@ -637,7 +645,8 @@ async function openFile(entry: Entry) {
           @load-more="store.loadMore"
         />
       </template>
-    </main>
+      </main>
+    </div>
 
     <TaskCenter />
 
@@ -775,7 +784,31 @@ async function openFile(entry: Entry) {
 <style scoped>
 .app-shell {
   display: flex;
+  flex-direction: column;
   height: 100%;
+}
+.app-menu-bar {
+  display: flex;
+  align-items: stretch;
+  height: 38px;
+  flex: none;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.app-brand {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.app-menu-spacer { flex: 1; }
+.app-frame {
+  display: flex;
+  min-height: 0;
+  flex: 1;
 }
 .sidebar {
   width: var(--sidebar-w);
@@ -786,14 +819,8 @@ async function openFile(entry: Entry) {
   flex-direction: column;
   overflow-y: auto;
 }
-.brand {
-  padding: 16px;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
 .connection-box {
-  padding: 0 12px 12px;
+  padding: 12px;
 }
 .connection-box .select {
   width: 100%;
@@ -807,11 +834,6 @@ async function openFile(entry: Entry) {
 .connection-actions .btn {
   flex: 1;
 }
-.preferences { padding-top: 10px; display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-.preferences label { display: flex; align-items: center; gap: 6px; }
-.preferences .select { flex: 1; min-width: 0; }
-.remember-dir { cursor: pointer; }
-.dir-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bucket-list {
   border-top: 1px solid var(--border);
   padding: 12px;
