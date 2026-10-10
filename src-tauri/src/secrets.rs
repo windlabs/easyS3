@@ -38,13 +38,24 @@ impl SecretStore {
 
     pub fn set(&self, id: &str, secret: &str) -> Result<(), String> {
         if let Ok(entry) = keyring::Entry::new(SERVICE, id) {
-            if entry.set_password(secret).is_ok() {
-                // Keychain 成功后无需保留过期的兜底副本。
+            // 必须用全新 Entry 读回校验：无平台后端时 keyring 退化为不持久化的 mock，
+            // set_password 会“假成功”，若据此删除兜底副本会导致凭据永久丢失。
+            if entry.set_password(secret).is_ok() && self.keyring_has(id, secret) {
+                // 钥匙串确实持久化成功，无需保留兜底副本。
                 let _ = self.remove_fallback(id);
                 return Ok(());
             }
         }
         self.set_fallback(id, secret)
+    }
+
+    /// 用独立的 Entry 读回比对，排除“无持久化 mock 后端”的假成功。
+    fn keyring_has(&self, id: &str, expected: &str) -> bool {
+        keyring::Entry::new(SERVICE, id)
+            .ok()
+            .and_then(|entry| entry.get_password().ok())
+            .as_deref()
+            == Some(expected)
     }
 
     pub fn delete(&self, id: &str) {
@@ -175,5 +186,24 @@ mod tests {
         assert!(!contents.contains("not-in-plain-text"));
         store.remove_fallback("connection-id").unwrap();
         assert!(store.get_fallback("connection-id").unwrap().is_none());
+    }
+
+    /// set/get 必须在任何后端下都成立：无持久化钥匙串时经加密兜底读回。
+    #[test]
+    fn set_get_round_trip_via_fallback_when_keyring_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SecretStore::new(dir.path().to_owned());
+        let id = "round-trip";
+        store.set(id, "s3cret-value").unwrap();
+        assert_eq!(store.get(id).unwrap().as_deref(), Some("s3cret-value"));
+        // 无持久化后端时，兜底副本必须存在（否则重启即丢）。
+        if !store.keyring_has(id, "s3cret-value") {
+            assert_eq!(
+                store.get_fallback(id).unwrap().as_deref(),
+                Some("s3cret-value")
+            );
+        }
+        store.delete(id);
+        assert_eq!(store.get(id).unwrap(), None);
     }
 }

@@ -22,11 +22,22 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 aws-sdk-s3 = { workspace = true }
-keyring = { workspace = true }
 aes-gcm = { workspace = true }
 rand = { workspace = true }
 base64 = "0.22"
 easys3-core = { path = "../crates/easys3-core" }
+
+# 凭据存储：仅 Windows / macOS 启用本机钥匙串后端（自包含，无额外系统库）。
+# Linux 等平台不启用 keyring 后端——keyring 会退化为“不持久化、每个 Entry 独立”的 mock；
+# secrets.rs 的 set 会校验读回，校验不通过即落到 AES-GCM 加密文件兜底，保证凭据不丢。
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+keyring = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
