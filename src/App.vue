@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -87,6 +87,8 @@ const presignMode = ref<"get" | "put">("get");
 const presignSeconds = ref(3600);
 const presignKey = ref("");
 const presignUrls = ref<string[]>([]);
+const showCommandPalette = ref(false);
+const commandQuery = ref("");
 const isReadOnly = computed(() => !!store.currentConnection()?.read_only);
 
 // 新建文件夹与历史 multipart 残片管理
@@ -187,6 +189,24 @@ onMounted(async () => {
     showCloseConfirm.value = true;
   });
 });
+
+function onGlobalKeydown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); showCommandPalette.value = true; commandQuery.value = ""; }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r") { event.preventDefault(); void store.refresh(); }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "u") { event.preventDefault(); if (!isReadOnly.value) void pickUpload(false); }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") { event.preventDefault(); showSearch.value = true; }
+  if (event.key === "Escape") showCommandPalette.value = false;
+}
+onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
+onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
+
+const commands = computed(() => [
+  { label: "刷新", key: "Ctrl/Cmd+R", run: () => void store.refresh() },
+  { label: "上传文件", key: "Ctrl/Cmd+U", run: () => { if (!isReadOnly.value) void pickUpload(false); } },
+  { label: "全局搜索", key: "Ctrl/Cmd+F", run: () => { showSearch.value = true; } },
+  { label: "新窗口", key: "", run: () => void openBrowserWindow() },
+  { label: "返回桶列表", key: "", run: () => void store.backToBuckets() },
+].filter((item) => item.label.toLowerCase().includes(commandQuery.value.toLowerCase())));
 
 // ---------- 连接 ----------
 
@@ -924,6 +944,7 @@ async function removeBucket() {
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
     <SettingsDialog v-model="showSettings" />
+    <div v-if="showCommandPalette" class="modal-mask"><div class="modal command-modal"><div class="modal-head">命令面板 <span class="muted">Ctrl/Cmd+K</span></div><div class="modal-body copy-form"><input v-model="commandQuery" class="input" autofocus placeholder="输入命令名称…" /><button v-for="command in commands" :key="command.label" class="command-row" @click="command.run(); showCommandPalette = false"><span>{{ command.label }}</span><kbd>{{ command.key }}</kbd></button><p class="copy-hint">快捷键：Ctrl/Cmd+R 刷新、Ctrl/Cmd+U 上传、Ctrl/Cmd+F 搜索、Ctrl/Cmd+K 命令面板。</p></div><div class="modal-foot"><button class="btn" @click="showCommandPalette = false">关闭</button></div></div></div>
     <div v-if="showConnectionTransfer" class="modal-mask"><div class="modal transfer-modal"><div class="modal-head">导入 / 导出连接</div><div class="modal-body copy-form"><section><b>导出</b><label><input v-model="includeExportSecrets" type="checkbox" /> 包含凭据（默认脱敏，需妥善保管）</label><input v-if="includeExportSecrets" v-model="connectionTransferPassword" class="input" type="password" placeholder="含凭据导出密码（必填）" /><button class="btn" @click="exportConnectionConfig">导出到文件…</button></section><section><b>导入配置文件</b><input v-model="connectionTransferPassword" class="input" type="password" placeholder="如导入文件加密，请输入密码" /><label><input v-model="importOverwrite" type="checkbox" /> 同名连接覆盖（否则跳过）</label><button class="btn" @click="importConnectionConfig">选择文件导入…</button></section><section><b>AWS CLI profile</b><button class="btn" @click="loadAwsProfiles">读取 ~/.aws/credentials</button><div v-if="awsProfiles.length" class="aws-profiles"><div v-for="profile in awsProfiles" :key="profile.id">{{ profile.name }} · {{ profile.region }}</div><button class="btn primary" @click="saveAwsProfiles">导入全部 profile</button></div></section></div><div class="modal-foot"><button class="btn primary" @click="showConnectionTransfer = false">关闭</button></div></div></div>
 
     <div v-if="showSearch" class="modal-mask"><div class="modal search-modal"><div class="modal-head">全局搜索与高级过滤</div><div class="modal-body copy-form"><input v-model="searchQuery" class="input" placeholder="例如 size>10MB AND modified>30d AND class=GLACIER" @keyup.enter="runSearch" /><label><input v-model="searchAcrossBuckets" type="checkbox" /> 搜索当前连接的所有桶</label><p class="copy-hint">语法：size&gt;10MB、size&lt;1GB、modified&gt;30d、class=GLACIER；使用 AND 连接。</p><div v-if="searching" class="muted">正在分页搜索，可继续操作其他界面…</div><div v-if="searchError" class="version-error">{{ searchError }}</div><div v-if="searchResults.length" class="search-results"><button v-for="item in searchResults" :key="`${item.bucket}/${item.key}`" class="search-row" @click="jumpToSearch(item)"><b>{{ item.bucket }}</b><span>{{ item.key }}</span><span>{{ formatBytes(item.size) }}</span></button></div><div v-else-if="!searching && !searchError" class="muted">输入条件后搜索；空条件可列出范围内所有文件。</div></div><div class="modal-foot"><button class="btn" @click="showSearch = false">关闭</button><button class="btn primary" :disabled="searching" @click="runSearch">搜索</button></div></div></div>
@@ -1186,6 +1207,10 @@ async function removeBucket() {
 .search-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .transfer-modal { width: min(620px, 94vw); }
 .transfer-modal section { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.command-modal { width: min(540px, 94vw); }
+.command-row { display: flex; justify-content: space-between; width: 100%; padding: 9px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; border-radius: 5px; }
+.command-row:hover { background: var(--hover); color: var(--primary); }
+kbd { color: var(--muted); font-size: 11px; }
 .multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
 .break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }
