@@ -220,6 +220,87 @@ pub async fn put_bucket_cors(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifecycleRuleDto {
+    pub id: String,
+    pub prefix: String,
+    pub enabled: bool,
+    pub expiration_days: Option<i32>,
+}
+pub async fn get_bucket_lifecycle(
+    client: &Client,
+    bucket: &str,
+) -> Result<Vec<LifecycleRuleDto>, CoreError> {
+    let out = client
+        .get_bucket_lifecycle_configuration()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(out
+        .rules()
+        .iter()
+        .map(|rule| LifecycleRuleDto {
+            id: rule.id().unwrap_or_default().to_owned(),
+            prefix: rule
+                .filter()
+                .and_then(|filter| filter.prefix())
+                .unwrap_or_default()
+                .to_owned(),
+            enabled: rule.status().as_str() == "Enabled",
+            expiration_days: rule.expiration().and_then(|value| value.days()),
+        })
+        .collect())
+}
+pub async fn put_bucket_lifecycle(
+    client: &Client,
+    bucket: &str,
+    rules: Vec<LifecycleRuleDto>,
+) -> Result<(), CoreError> {
+    let mut built = Vec::new();
+    for rule in rules {
+        if rule.id.trim().is_empty() {
+            return Err(CoreError::Other("Lifecycle 规则 ID 不能为空".into()));
+        }
+        let mut builder = aws_sdk_s3::types::LifecycleRule::builder()
+            .id(rule.id)
+            .filter(
+                aws_sdk_s3::types::LifecycleRuleFilter::builder()
+                    .prefix(rule.prefix)
+                    .build(),
+            )
+            .status(if rule.enabled {
+                aws_sdk_s3::types::ExpirationStatus::Enabled
+            } else {
+                aws_sdk_s3::types::ExpirationStatus::Disabled
+            });
+        if let Some(days) = rule.expiration_days {
+            builder = builder.expiration(
+                aws_sdk_s3::types::LifecycleExpiration::builder()
+                    .days(days)
+                    .build(),
+            );
+        }
+        built.push(
+            builder
+                .build()
+                .map_err(|e| CoreError::Other(format!("Lifecycle 规则无效：{e}")))?,
+        );
+    }
+    let configuration = aws_sdk_s3::types::BucketLifecycleConfiguration::builder()
+        .set_rules(Some(built))
+        .build()
+        .map_err(|e| CoreError::Other(format!("Lifecycle 配置无效：{e}")))?;
+    client
+        .put_bucket_lifecycle_configuration()
+        .bucket(bucket)
+        .lifecycle_configuration(configuration)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+
 pub async fn bucket_versioning(
     client: &Client,
     bucket: &str,

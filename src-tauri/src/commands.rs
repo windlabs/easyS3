@@ -834,6 +834,31 @@ pub async fn save_bucket_cors(
         .await
         .map_err(|e| e.to_string())
 }
+#[tauri::command]
+pub async fn bucket_lifecycle(
+    state: State<'_, App>,
+    bucket: String,
+) -> Result<Vec<easys3_core::object::LifecycleRuleDto>, String> {
+    require_writable(&state)?;
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::get_bucket_lifecycle(&client, &bucket)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn save_bucket_lifecycle(
+    state: State<'_, App>,
+    bucket: String,
+    rules: Vec<easys3_core::object::LifecycleRuleDto>,
+) -> Result<(), String> {
+    require_writable(&state)?;
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_client()?;
+    easys3_core::object::put_bucket_lifecycle(&client, &bucket, rules)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 pub async fn list_objects(

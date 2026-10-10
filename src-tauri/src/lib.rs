@@ -71,6 +71,8 @@ pub fn run() {
             commands::save_bucket_policy,
             commands::bucket_cors,
             commands::save_bucket_cors,
+            commands::bucket_lifecycle,
+            commands::save_bucket_lifecycle,
             commands::list_objects,
             commands::count_objects,
             commands::prefix_usage,
