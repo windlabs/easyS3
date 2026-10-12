@@ -946,13 +946,24 @@ pub async fn save_bucket_policy(
     state: State<'_, App>,
     bucket: String,
     policy: String,
+    previous: String,
 ) -> Result<(), String> {
     require_writable(&state)?;
     reject_limited_connection(&state)?;
     let (client, _) = state.current_client()?;
-    easys3_core::object::put_bucket_policy(&client, &bucket, &policy)
-        .await
-        .map_err(|e| e.to_string())
+    match easys3_core::object::put_bucket_policy(&client, &bucket, &policy).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let rollback =
+                easys3_core::object::put_bucket_policy(&client, &bucket, &previous).await;
+            Err(match rollback {
+                Ok(()) => format!("保存 Bucket Policy 失败，已尝试恢复上一版本：{error}"),
+                Err(rollback_error) => format!(
+                    "保存 Bucket Policy 失败，恢复上一版本也失败：{error}；{rollback_error}"
+                ),
+            })
+        }
+    }
 }
 #[tauri::command]
 pub async fn bucket_cors(
@@ -971,13 +982,23 @@ pub async fn save_bucket_cors(
     state: State<'_, App>,
     bucket: String,
     rules: Vec<easys3_core::object::CorsRuleDto>,
+    previous: Vec<easys3_core::object::CorsRuleDto>,
 ) -> Result<(), String> {
     require_writable(&state)?;
     reject_limited_connection(&state)?;
     let (client, _) = state.current_client()?;
-    easys3_core::object::put_bucket_cors(&client, &bucket, rules)
-        .await
-        .map_err(|e| e.to_string())
+    match easys3_core::object::put_bucket_cors(&client, &bucket, rules).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let rollback = easys3_core::object::put_bucket_cors(&client, &bucket, previous).await;
+            Err(match rollback {
+                Ok(()) => format!("保存 CORS 失败，已尝试恢复上一版本：{error}"),
+                Err(rollback_error) => {
+                    format!("保存 CORS 失败，恢复上一版本也失败：{error}；{rollback_error}")
+                }
+            })
+        }
+    }
 }
 #[tauri::command]
 pub async fn bucket_lifecycle(
@@ -996,13 +1017,24 @@ pub async fn save_bucket_lifecycle(
     state: State<'_, App>,
     bucket: String,
     rules: Vec<easys3_core::object::LifecycleRuleDto>,
+    previous: Vec<easys3_core::object::LifecycleRuleDto>,
 ) -> Result<(), String> {
     require_writable(&state)?;
     reject_limited_connection(&state)?;
     let (client, _) = state.current_client()?;
-    easys3_core::object::put_bucket_lifecycle(&client, &bucket, rules)
-        .await
-        .map_err(|e| e.to_string())
+    match easys3_core::object::put_bucket_lifecycle(&client, &bucket, rules).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let rollback =
+                easys3_core::object::put_bucket_lifecycle(&client, &bucket, previous).await;
+            Err(match rollback {
+                Ok(()) => format!("保存 Lifecycle 失败，已尝试恢复上一版本：{error}"),
+                Err(rollback_error) => {
+                    format!("保存 Lifecycle 失败，恢复上一版本也失败：{error}；{rollback_error}")
+                }
+            })
+        }
+    }
 }
 #[tauri::command]
 pub async fn bucket_website(
@@ -1021,13 +1053,24 @@ pub async fn save_bucket_website(
     state: State<'_, App>,
     bucket: String,
     website: easys3_core::object::WebsiteDto,
+    previous: easys3_core::object::WebsiteDto,
 ) -> Result<(), String> {
     require_writable(&state)?;
     reject_limited_connection(&state)?;
     let (client, _) = state.current_client()?;
-    easys3_core::object::put_bucket_website(&client, &bucket, website)
-        .await
-        .map_err(|e| e.to_string())
+    match easys3_core::object::put_bucket_website(&client, &bucket, website).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let rollback =
+                easys3_core::object::put_bucket_website(&client, &bucket, previous).await;
+            Err(match rollback {
+                Ok(()) => format!("保存静态网站配置失败，已尝试恢复上一版本：{error}"),
+                Err(rollback_error) => {
+                    format!("保存静态网站配置失败，恢复上一版本也失败：{error}；{rollback_error}")
+                }
+            })
+        }
+    }
 }
 #[tauri::command]
 pub async fn object_lock(

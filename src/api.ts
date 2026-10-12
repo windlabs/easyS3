@@ -51,13 +51,13 @@ export const deleteBucket = (bucket: string) => invoke<void>("delete_bucket", { 
 export const bucketVersioning = (bucket: string) => invoke<BucketVersioningInfo>("bucket_versioning", { bucket });
 export const setBucketVersioning = (bucket: string, enabled: boolean) => invoke<void>("set_bucket_versioning", { bucket, enabled });
 export const bucketPolicy = (bucket: string) => invoke<string>("bucket_policy", { bucket });
-export const saveBucketPolicy = (bucket: string, policy: string) => invoke<void>("save_bucket_policy", { bucket, policy });
+export const saveBucketPolicy = (bucket: string, policy: string, previous: string) => invoke<void>("save_bucket_policy", { bucket, policy, previous });
 export const bucketCors = (bucket: string) => invoke<import("./types").CorsRule[]>("bucket_cors", { bucket });
-export const saveBucketCors = (bucket: string, rules: import("./types").CorsRule[]) => invoke<void>("save_bucket_cors", { bucket, rules });
+export const saveBucketCors = (bucket: string, rules: import("./types").CorsRule[], previous: import("./types").CorsRule[]) => invoke<void>("save_bucket_cors", { bucket, rules, previous });
 export const bucketLifecycle = (bucket: string) => invoke<import("./types").LifecycleRule[]>("bucket_lifecycle", { bucket });
-export const saveBucketLifecycle = (bucket: string, rules: import("./types").LifecycleRule[]) => invoke<void>("save_bucket_lifecycle", { bucket, rules });
+export const saveBucketLifecycle = (bucket: string, rules: import("./types").LifecycleRule[], previous: import("./types").LifecycleRule[]) => invoke<void>("save_bucket_lifecycle", { bucket, rules, previous });
 export const bucketWebsite = (bucket: string) => invoke<import("./types").WebsiteConfig>("bucket_website", { bucket });
-export const saveBucketWebsite = (bucket: string, website: import("./types").WebsiteConfig) => invoke<void>("save_bucket_website", { bucket, website });
+export const saveBucketWebsite = (bucket: string, website: import("./types").WebsiteConfig, previous: import("./types").WebsiteConfig) => invoke<void>("save_bucket_website", { bucket, website, previous });
 export const objectLock = (bucket: string) => invoke<import("./types").ObjectLockInfo>("object_lock", { bucket });
 export const selectCsvObject = (bucket: string, key: string, expression: string) => invoke<import("./types").SelectResult>("select_csv_object", { bucket, key, expression });
 export const startSelectCsvObject = (bucket: string, key: string, expression: string) => invoke<string>("start_select_csv_object", { bucket, key, expression });

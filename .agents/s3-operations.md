@@ -201,3 +201,8 @@
 
 - 上传确认支持 SSE-S3、SSE-KMS（可选 Key ID）和 SSE-C。SSE-C 密钥为 Base64 编码的 32 字节会话输入，只用于当前请求，绝不持久化到连接、任务、日志或错误消息。
 - 小文件 PutObject 与 multipart CreateMultipartUpload 都设置相应 SSE 头；对象详情显示服务端加密状态。SSE-C 下载解密与客户端 AES-256 加密需单独的会话密钥与对象格式支持。
+
+## 28. Bucket 配置编辑（P2-02）
+
+- 支持 Bucket Policy、CORS、Lifecycle（前缀、启用、过期天数、转储存储类别）和静态网站 JSON 编辑；Object Lock 仅只读展示，ACL 写入保持红线。
+- 编辑器保存前显示原始文本与行级新增/删除 diff。保存失败后尝试以加载时快照恢复上一版本，回滚结果在中文错误中说明；本地编辑缓冲不清空。

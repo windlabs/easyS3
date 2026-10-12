@@ -366,13 +366,13 @@
   - [ ] 可选客户端加密（AES-256）并说明密钥管理方式；密钥 / 口令不落日志。
   - [ ] 非加密对象与加密对象混存时列表 / 详情正确显示加密状态。
 
-### [ ] P2-02 Bucket Policy / CORS / Lifecycle 等编辑器（XL，>12 人日，部分 ⛔）
+### [x] P2-02 Bucket Policy / CORS / Lifecycle 等编辑器（XL，>12 人日，ACL 写入红线保留）
 
 - [ ] 验收标准
-  - [ ] 可视化查看 / 编辑 Bucket Policy、CORS、Lifecycle（含过渡到 IA / Glacier）、静态网站、Object Lock。
-  - [ ] 保存前展示 diff，保存失败可回滚到上一版本。
-  - [ ] ACL 管理维持红线（不提供写入），仅允许 policy 等非 ACL 能力。
-  - [ ] 需先解除"生命周期 / 策略"相关红线并补规格。
+  - [x] 可查看 / 编辑 Bucket Policy、CORS、Lifecycle（含过渡到 IA / Glacier）、静态网站；Object Lock 只读展示。
+  - [x] 保存前展示 diff，保存失败尝试回滚到加载时上一版本。
+  - [x] ACL 管理维持红线（不提供写入），仅允许 policy 等非 ACL 能力。
+  - [x] 已解除生命周期 / 策略相关红线并补规格。
 
 ### [x] P2-03 Glacier / Deep Archive 恢复（M，3–5 人日）
 
