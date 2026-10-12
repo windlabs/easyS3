@@ -108,7 +108,7 @@ pub async fn test_assume_role(
     external_id: Option<String>,
 ) -> Result<(), String> {
     let connection = state.current_connection()?;
-    let client =
+    let (client, _) =
         easys3_core::s3::assume_role_client(&connection, &role_arn, external_id.as_deref())
             .await
             .map_err(|e| e.to_string())?;
@@ -129,7 +129,7 @@ pub async fn activate_assume_role(state: State<'_, App>) -> Result<(), String> {
         .role_arn
         .as_deref()
         .ok_or("当前连接未配置 Role ARN")?;
-    let client = easys3_core::s3::assume_role_client(
+    let (client, expiry) = easys3_core::s3::assume_role_client(
         &connection,
         role_arn,
         connection.external_id.as_deref(),
@@ -139,8 +139,15 @@ pub async fn activate_assume_role(state: State<'_, App>) -> Result<(), String> {
     let mut inner = lock(&state.inner);
     inner.clients.insert(connection.id.clone(), client.clone());
     // 临时凭据已带权限，控制面也复用该 Client；S3 SDK 请求超时由服务端/连接层处理。
+    let connection_id = connection.id.clone();
     inner.control_clients.insert(connection.id, client);
+    lock(&state.assumed_role_expiry).insert(connection_id, expiry);
     Ok(())
+}
+#[tauri::command]
+pub fn assume_role_expiry(state: State<App>) -> Result<Option<u64>, String> {
+    let id = state.current_connection()?.id;
+    Ok(lock(&state.assumed_role_expiry).get(&id).copied())
 }
 
 #[tauri::command]

@@ -108,7 +108,7 @@ pub async fn assume_role_client(
     p: &ConnectionConfig,
     role_arn: &str,
     external_id: Option<&str>,
-) -> Result<Client, CoreError> {
+) -> Result<(Client, u64), CoreError> {
     if role_arn.trim().is_empty() {
         return Err(CoreError::InvalidConfig("Role ARN 不能为空".into()));
     }
@@ -154,7 +154,8 @@ pub async fn assume_role_client(
     if let Some(path) = p.ca_cert_path.as_deref().filter(|path| !path.is_empty()) {
         builder = builder.http_client(build_ca_http_client(path)?);
     }
-    Ok(Client::from_conf(builder.build()))
+    let expiry = credentials.expiration().secs().max(0) as u64;
+    Ok((Client::from_conf(builder.build()), expiry))
 }
 
 /// Cost Explorer 固定使用 AWS 公有服务端点与 us-east-1；不复用 S3 兼容 endpoint。

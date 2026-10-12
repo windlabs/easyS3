@@ -48,6 +48,7 @@ pub fn run() {
             commands::get_state,
             commands::test_assume_role,
             commands::activate_assume_role,
+            commands::assume_role_expiry,
             commands::get_audit,
             commands::export_audit,
             commands::record_audit,
