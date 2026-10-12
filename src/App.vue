@@ -234,11 +234,20 @@ function onGlobalKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r") { event.preventDefault(); void store.refresh(); }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "u") { event.preventDefault(); if (!isReadOnly.value) void pickUpload(false); }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") { event.preventDefault(); showSearch.value = true; }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { void pasteUpload(); }
   if (event.key === "Escape") showCommandPalette.value = false;
 }
 onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
 onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
+function onPaste(event: ClipboardEvent) {
+  if (isReadOnly.value || store.browse.mode !== "objects") return;
+  const files = Array.from(event.clipboardData?.files ?? []);
+  // Tauri WebView 在支持 file path 的平台会暴露 path；无 path 时再回退为图片读取。
+  const paths = files.map((file) => (file as File & { path?: string }).path).filter((path): path is string => !!path);
+  if (paths.length) { event.preventDefault(); void beginUpload(paths); return; }
+  if (files.some((file) => file.type.startsWith("image/"))) { event.preventDefault(); void pasteUpload(); }
+}
+onMounted(() => window.addEventListener("paste", onPaste));
+onBeforeUnmount(() => window.removeEventListener("paste", onPaste));
 async function pasteUpload() {
   if (isReadOnly.value || store.browse.mode !== "objects") return;
   try { const path = await api.pasteClipboardImage(); if (path) await beginUpload([path]); } catch { /* 非图片剪贴板静默忽略 */ }
