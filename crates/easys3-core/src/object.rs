@@ -226,6 +226,8 @@ pub struct LifecycleRuleDto {
     pub prefix: String,
     pub enabled: bool,
     pub expiration_days: Option<i32>,
+    pub transition_days: Option<i32>,
+    pub transition_class: Option<String>,
 }
 pub async fn get_bucket_lifecycle(
     client: &Client,
@@ -249,6 +251,12 @@ pub async fn get_bucket_lifecycle(
                 .to_owned(),
             enabled: rule.status().as_str() == "Enabled",
             expiration_days: rule.expiration().and_then(|value| value.days()),
+            transition_days: rule.transitions().first().and_then(|value| value.days()),
+            transition_class: rule
+                .transitions()
+                .first()
+                .and_then(|value| value.storage_class())
+                .map(|value| value.as_str().to_owned()),
         })
         .collect())
 }
@@ -278,6 +286,17 @@ pub async fn put_bucket_lifecycle(
             builder = builder.expiration(
                 aws_sdk_s3::types::LifecycleExpiration::builder()
                     .days(days)
+                    .build(),
+            );
+        }
+        if let (Some(days), Some(class)) = (rule.transition_days, rule.transition_class) {
+            let class = class
+                .parse::<aws_sdk_s3::types::TransitionStorageClass>()
+                .map_err(|_| CoreError::Other("不支持的 Lifecycle 过渡存储类别".into()))?;
+            builder = builder.transitions(
+                aws_sdk_s3::types::Transition::builder()
+                    .days(days)
+                    .storage_class(class)
                     .build(),
             );
         }
