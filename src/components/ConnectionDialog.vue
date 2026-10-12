@@ -30,6 +30,7 @@ const testMsg = ref("");
 const saving = ref(false);
 const saveError = ref("");
 const confirmDelete = ref(false);
+const assumeRoleExpiry = ref<number | null>(null);
 
 watch(
   () => props.modelValue,
@@ -48,6 +49,8 @@ watch(
       : "";
     saveError.value = "";
     confirmDelete.value = false;
+    assumeRoleExpiry.value = null;
+    if (form.role_arn) void api.assumeRoleExpiry().then((value) => { assumeRoleExpiry.value = value; }).catch(() => {});
   },
 );
 
@@ -99,7 +102,7 @@ async function testAssumeRole() {
 }
 async function activateAssumeRole() {
   testing.value = true; testMsg.value = "";
-  try { await api.saveConnection(toPayload()); await api.activateAssumeRole(); testOk.value = true; testMsg.value = "AssumeRole 已激活，当前会话将使用临时凭据"; emit("saved"); }
+  try { await api.saveConnection(toPayload()); await api.activateAssumeRole(); assumeRoleExpiry.value = await api.assumeRoleExpiry(); testOk.value = true; testMsg.value = "AssumeRole 已激活，当前会话将使用临时凭据"; emit("saved"); }
   catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
   finally { testing.value = false; }
 }
@@ -227,6 +230,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         </div>
         <div class="form-row"><label>Role ARN（可选）</label><input v-model="form.role_arn" class="input" placeholder="arn:aws:iam::123456789012:role/RoleName" /></div>
         <div class="form-row"><label>External ID（可选）</label><input v-model="form.external_id" class="input" placeholder="第三方信任策略要求时填写" /></div>
+        <div v-if="form.role_arn && assumeRoleExpiry" class="form-hint">临时凭据到期：{{ formatTime(new Date(assumeRoleExpiry * 1000).toISOString()) }}<span v-if="assumeRoleExpiry * 1000 <= Date.now()">（已过期，请重新激活）</span></div>
         <div class="form-row"><label>回收站前缀（可选）</label><input v-model="form.recycle_prefix" class="input" placeholder="例如 .easys3-trash/；启用后删除先移入此处" /></div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>
