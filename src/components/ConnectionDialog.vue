@@ -70,6 +70,8 @@ function toPayload(): ConnectionConfig {
     recycle_prefix: form.recycle_prefix?.trim() || null,
     sso_start_url: form.sso_start_url?.trim() || null,
     sso_region: form.sso_region?.trim() || null,
+    sso_account_id: form.sso_account_id?.trim() || null,
+    sso_role_name: form.sso_role_name?.trim() || null,
     ca_cert_path: form.ca_cert_path?.trim() || null,
     last_test: form.last_test ?? null,
   };
@@ -124,6 +126,7 @@ async function completeSsoAuthorization() {
   catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
   finally { testing.value = false; }
 }
+async function activateSsoRole() { testing.value = true; try { await api.saveConnection(toPayload()); const seconds = await api.activateSsoRole(); testOk.value = true; testMsg.value = `SSO 角色临时凭据已激活，有效期约 ${Math.floor(seconds / 60)} 分钟`; emit("saved"); } catch (e) { testOk.value = false; testMsg.value = errorMessage(e); } finally { testing.value = false; } }
 
 async function save() {
   saving.value = true;
@@ -252,6 +255,8 @@ const { onMousedown, onClick } = useMaskClose(close);
         <div class="form-row"><label>回收站前缀（可选）</label><input v-model="form.recycle_prefix" class="input" placeholder="例如 .easys3-trash/；启用后删除先移入此处" /></div>
         <div class="form-row"><label>SSO Start URL（可选）</label><input v-model="form.sso_start_url" class="input" placeholder="https://your-sso-portal.awsapps.com/start" /></div>
         <div class="form-row"><label>SSO Region（可选）</label><input v-model="form.sso_region" class="input" placeholder="例如 us-east-1" /></div>
+        <div class="form-row"><label>SSO Account ID（可选）</label><input v-model="form.sso_account_id" class="input" placeholder="12 位 AWS 账户 ID" /></div>
+        <div class="form-row"><label>SSO Role Name（可选）</label><input v-model="form.sso_role_name" class="input" placeholder="例如 AdministratorAccess" /></div>
         <div v-if="ssoDevice" class="form-hint">请访问：{{ ssoDevice.verification_uri_complete || ssoDevice.verification_uri }}<br />设备码：<b>{{ ssoDevice.user_code }}</b>（{{ ssoDevice.expires_in }} 秒内有效）</div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>
@@ -272,6 +277,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         <button v-if="form.role_arn" class="btn" :disabled="testing" @click="activateAssumeRole">激活临时凭据</button>
         <button v-if="form.sso_start_url" class="btn" :disabled="testing" @click="startSsoAuthorization">开始 SSO 授权</button>
         <button v-if="ssoDevice" class="btn" :disabled="testing" @click="completeSsoAuthorization">我已完成浏览器授权</button>
+        <button v-if="form.sso_account_id && form.sso_role_name" class="btn" :disabled="testing" @click="activateSsoRole">激活 SSO 角色凭据</button>
         <button class="btn" @click="close">取消</button>
         <button class="btn primary" :disabled="saving" @click="save">
           {{ saving ? "保存中…" : "保存" }}

@@ -13,6 +13,7 @@ thiserror = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-sdk-sts = { workspace = true }
 aws-sdk-costexplorer = { workspace = true }
+aws-sdk-sso = { workspace = true }
 aws-smithy-runtime-api = "1"
 aws-smithy-http-client = "1.4"
 aws-smithy-types = "1"

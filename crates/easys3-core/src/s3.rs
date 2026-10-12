@@ -194,6 +194,8 @@ mod tests {
             recycle_prefix: None,
             sso_start_url: None,
             sso_region: None,
+            sso_account_id: None,
+            sso_role_name: None,
             ca_cert_path: None,
             last_test: None,
         }

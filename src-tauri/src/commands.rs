@@ -198,6 +198,70 @@ pub async fn complete_sso_device_authorization(state: State<'_, App>) -> Result<
         .set(&format!("sso:{}", pending.connection_id), token)?;
     Ok(output.expires_in().max(0) as u64)
 }
+#[tauri::command]
+pub async fn activate_sso_role(state: State<'_, App>) -> Result<u64, String> {
+    let connection = state.current_connection()?;
+    let region = connection
+        .sso_region
+        .as_deref()
+        .ok_or("当前连接未配置 SSO Region")?;
+    let account_id = connection
+        .sso_account_id
+        .as_deref()
+        .ok_or("当前连接未配置 SSO Account ID")?;
+    let role_name = connection
+        .sso_role_name
+        .as_deref()
+        .ok_or("当前连接未配置 SSO Role Name")?;
+    let token = state
+        .secrets
+        .get(&format!("sso:{}", connection.id))?
+        .ok_or("未找到 SSO access token，请重新进行 SSO 授权")?;
+    let config = aws_sdk_sso::config::Builder::new()
+        .region(aws_sdk_sso::config::Region::new(region.to_owned()))
+        .build();
+    let sso = aws_sdk_sso::Client::from_conf(config);
+    let output = sso
+        .get_role_credentials()
+        .access_token(token)
+        .account_id(account_id)
+        .role_name(role_name)
+        .send()
+        .await
+        .map_err(|e| format!("获取 SSO 角色凭据失败，请重新授权：{e}"))?;
+    let credentials = output.role_credentials().ok_or("SSO 未返回角色凭据")?;
+    let access_key = credentials
+        .access_key_id()
+        .ok_or("SSO 角色凭据缺少 Access Key")?;
+    let secret_key = credentials
+        .secret_access_key()
+        .ok_or("SSO 角色凭据缺少 Secret Key")?;
+    let session_token = credentials
+        .session_token()
+        .ok_or("SSO 角色凭据缺少 Session Token")?;
+    let client = aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::Config::builder()
+            .endpoint_url(connection.endpoint_url.trim())
+            .region(aws_sdk_s3::config::Region::new(connection.region.clone()))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                access_key,
+                secret_key,
+                Some(session_token.to_owned()),
+                None,
+                "easys3-sso",
+            ))
+            .force_path_style(connection.force_path_style)
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .build(),
+    );
+    let expiry = credentials.expiration().max(0) as u64;
+    let connection_id = connection.id.clone();
+    let mut inner = lock(&state.inner);
+    inner.clients.insert(connection_id.clone(), client.clone());
+    inner.control_clients.insert(connection_id.clone(), client);
+    lock(&state.assumed_role_expiry).insert(connection_id, expiry);
+    Ok(expiry)
+}
 
 /// 激活当前连接的 AssumeRole 临时 Client。Client 仅驻留进程内，连接配置保存时自动失效；
 /// 不写入 AWS CLI 文件或 connections.json。
@@ -619,6 +683,8 @@ pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
                 recycle_prefix: None,
                 sso_start_url: None,
                 sso_region: None,
+                sso_account_id: None,
+                sso_role_name: None,
                 ca_cert_path: None,
                 last_test: None,
             })

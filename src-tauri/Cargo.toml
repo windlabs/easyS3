@@ -30,6 +30,7 @@ uuid = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-sdk-sts = { workspace = true }
 aws-sdk-ssooidc = { workspace = true }
+aws-sdk-sso = { workspace = true }
 aws-sdk-costexplorer = { workspace = true }
 aes-gcm = { workspace = true }
 rand = { workspace = true }
