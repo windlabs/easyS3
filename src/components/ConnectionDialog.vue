@@ -118,6 +118,12 @@ async function startSsoAuthorization() {
   catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
   finally { testing.value = false; }
 }
+async function completeSsoAuthorization() {
+  testing.value = true;
+  try { const seconds = await api.completeSsoDeviceAuthorization(); testOk.value = true; testMsg.value = `SSO 授权完成，token 有效期约 ${Math.floor(seconds / 60)} 分钟`; ssoDevice.value = null; }
+  catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
+  finally { testing.value = false; }
+}
 
 async function save() {
   saving.value = true;
@@ -265,6 +271,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         <button v-if="form.role_arn" class="btn" :disabled="testing" @click="testAssumeRole">验证 AssumeRole</button>
         <button v-if="form.role_arn" class="btn" :disabled="testing" @click="activateAssumeRole">激活临时凭据</button>
         <button v-if="form.sso_start_url" class="btn" :disabled="testing" @click="startSsoAuthorization">开始 SSO 授权</button>
+        <button v-if="ssoDevice" class="btn" :disabled="testing" @click="completeSsoAuthorization">我已完成浏览器授权</button>
         <button class="btn" @click="close">取消</button>
         <button class="btn primary" :disabled="saving" @click="save">
           {{ saving ? "保存中…" : "保存" }}

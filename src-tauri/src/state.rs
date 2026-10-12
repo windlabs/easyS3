@@ -16,6 +16,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::Manager;
 
+#[derive(Clone)]
+pub struct PendingSsoAuthorization {
+    pub region: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub device_code: String,
+    pub connection_id: String,
+}
+
 pub struct App {
     pub config_path: PathBuf,
     pub secrets: SecretStore,
@@ -29,6 +38,7 @@ pub struct App {
     pub inventory: Mutex<InventoryIndex>,
     /// P2-04 AssumeRole 临时 Client 的到期时间；临时凭据本身永不落盘。
     pub assumed_role_expiry: Mutex<HashMap<String, u64>>,
+    pub pending_sso: Mutex<HashMap<String, PendingSsoAuthorization>>,
     /// 传输设置快照（保存设置时更新；任务启动时读取快照）
     pub settings: Mutex<TransferSettings>,
     /// 全局上传限速（跨任务共享，保存设置热调整）
@@ -99,6 +109,7 @@ impl App {
             inventory_path: inventory_path.clone(),
             inventory: Mutex::new(inventory::load(&inventory_path).unwrap_or_default()),
             assumed_role_expiry: Mutex::new(HashMap::new()),
+            pending_sso: Mutex::new(HashMap::new()),
             settings: Mutex::new(settings),
             upload_throttle,
             download_throttle,

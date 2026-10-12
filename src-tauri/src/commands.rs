@@ -128,6 +128,7 @@ pub async fn test_assume_role(
 }
 #[tauri::command]
 pub async fn start_sso_device_authorization(
+    state: State<'_, App>,
     start_url: String,
     region: String,
 ) -> Result<SsoDeviceCode, String> {
@@ -135,7 +136,7 @@ pub async fn start_sso_device_authorization(
         return Err("SSO Start URL 必须是 https 地址".to_string());
     }
     let config = aws_sdk_ssooidc::config::Builder::new()
-        .region(aws_sdk_ssooidc::config::Region::new(region))
+        .region(aws_sdk_ssooidc::config::Region::new(region.clone()))
         .build();
     let client = aws_sdk_ssooidc::Client::from_conf(config);
     let registration = client
@@ -154,12 +155,48 @@ pub async fn start_sso_device_authorization(
         .send()
         .await
         .map_err(|e| format!("启动 SSO 设备授权失败：{e}"))?;
+    let connection_id = state.current_connection()?.id;
+    lock(&state.pending_sso).insert(
+        connection_id.clone(),
+        crate::state::PendingSsoAuthorization {
+            region,
+            client_id: registration.client_id().unwrap_or_default().to_owned(),
+            client_secret: registration.client_secret().unwrap_or_default().to_owned(),
+            device_code: output.device_code().unwrap_or_default().to_owned(),
+            connection_id,
+        },
+    );
     Ok(SsoDeviceCode {
         verification_uri: output.verification_uri().unwrap_or_default().to_owned(),
         verification_uri_complete: output.verification_uri_complete().map(ToOwned::to_owned),
         user_code: output.user_code().unwrap_or_default().to_owned(),
         expires_in: output.expires_in(),
     })
+}
+#[tauri::command]
+pub async fn complete_sso_device_authorization(state: State<'_, App>) -> Result<u64, String> {
+    let connection_id = state.current_connection()?.id;
+    let pending = lock(&state.pending_sso)
+        .remove(&connection_id)
+        .ok_or("没有等待中的 SSO 设备授权，请先开始授权")?;
+    let config = aws_sdk_ssooidc::config::Builder::new()
+        .region(aws_sdk_ssooidc::config::Region::new(pending.region))
+        .build();
+    let client = aws_sdk_ssooidc::Client::from_conf(config);
+    let output = client
+        .create_token()
+        .client_id(pending.client_id)
+        .client_secret(pending.client_secret)
+        .grant_type("urn:ietf:params:oauth:grant-type:device_code")
+        .device_code(pending.device_code)
+        .send()
+        .await
+        .map_err(|e| format!("SSO 授权尚未完成或已过期：{e}"))?;
+    let token = output.access_token().ok_or("SSO 未返回 access token")?;
+    state
+        .secrets
+        .set(&format!("sso:{}", pending.connection_id), token)?;
+    Ok(output.expires_in().max(0) as u64)
 }
 
 /// 激活当前连接的 AssumeRole 临时 Client。Client 仅驻留进程内，连接配置保存时自动失效；
