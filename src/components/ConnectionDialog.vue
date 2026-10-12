@@ -32,6 +32,8 @@ const saveError = ref("");
 const confirmDelete = ref(false);
 const assumeRoleExpiry = ref<number | null>(null);
 const ssoDevice = ref<{ verification_uri: string; verification_uri_complete: string | null; user_code: string; expires_in: number } | null>(null);
+const ssoAccounts = ref<{ id: string; name: string }[]>([]);
+const ssoRoles = ref<{ name: string }[]>([]);
 
 watch(
   () => props.modelValue,
@@ -127,6 +129,8 @@ async function completeSsoAuthorization() {
   finally { testing.value = false; }
 }
 async function activateSsoRole() { testing.value = true; try { await api.saveConnection(toPayload()); const seconds = await api.activateSsoRole(); testOk.value = true; testMsg.value = `SSO 角色临时凭据已激活，有效期约 ${Math.floor(seconds / 60)} 分钟`; emit("saved"); } catch (e) { testOk.value = false; testMsg.value = errorMessage(e); } finally { testing.value = false; } }
+async function loadSsoAccounts() { try { ssoAccounts.value = await api.listSsoAccounts(); } catch (e) { testMsg.value = errorMessage(e); } }
+async function loadSsoRoles() { if (!form.sso_account_id) return; try { ssoRoles.value = await api.listSsoRoles(form.sso_account_id); } catch (e) { testMsg.value = errorMessage(e); } }
 
 async function save() {
   saving.value = true;
@@ -257,6 +261,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         <div class="form-row"><label>SSO Region（可选）</label><input v-model="form.sso_region" class="input" placeholder="例如 us-east-1" /></div>
         <div class="form-row"><label>SSO Account ID（可选）</label><input v-model="form.sso_account_id" class="input" placeholder="12 位 AWS 账户 ID" /></div>
         <div class="form-row"><label>SSO Role Name（可选）</label><input v-model="form.sso_role_name" class="input" placeholder="例如 AdministratorAccess" /></div>
+        <div v-if="form.sso_start_url" class="form-row"><button class="btn sm" :disabled="testing" @click="loadSsoAccounts">读取 SSO 账户</button><select v-if="ssoAccounts.length" v-model="form.sso_account_id" class="select" @change="loadSsoRoles"><option v-for="account in ssoAccounts" :key="account.id" :value="account.id">{{ account.name }} ({{ account.id }})</option></select><select v-if="ssoRoles.length" v-model="form.sso_role_name" class="select"><option v-for="role in ssoRoles" :key="role.name" :value="role.name">{{ role.name }}</option></select></div>
         <div v-if="ssoDevice" class="form-hint">请访问：{{ ssoDevice.verification_uri_complete || ssoDevice.verification_uri }}<br />设备码：<b>{{ ssoDevice.user_code }}</b>（{{ ssoDevice.expires_in }} 秒内有效）</div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>

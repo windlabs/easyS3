@@ -28,6 +28,8 @@ export const testAssumeRole = (roleArn: string, externalId: string | null) => in
 export const startSsoDeviceAuthorization = (startUrl: string, region: string) => invoke<{ verification_uri: string; verification_uri_complete: string | null; user_code: string; expires_in: number }>("start_sso_device_authorization", { start_url: startUrl, region });
 export const completeSsoDeviceAuthorization = () => invoke<number>("complete_sso_device_authorization");
 export const activateSsoRole = () => invoke<number>("activate_sso_role");
+export const listSsoAccounts = () => invoke<{ id: string; name: string }[]>("list_sso_accounts");
+export const listSsoRoles = (accountId: string) => invoke<{ name: string }[]>("list_sso_roles", { account_id: accountId });
 export const activateAssumeRole = () => invoke<void>("activate_assume_role");
 export const assumeRoleExpiry = () => invoke<number | null>("assume_role_expiry");
 export const getAudit = (connection: string | null, since: number | null) => invoke<import("./types").AuditEntry[]>("get_audit", { connection, since });

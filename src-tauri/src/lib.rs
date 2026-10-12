@@ -50,6 +50,8 @@ pub fn run() {
             commands::start_sso_device_authorization,
             commands::complete_sso_device_authorization,
             commands::activate_sso_role,
+            commands::list_sso_accounts,
+            commands::list_sso_roles,
             commands::activate_assume_role,
             commands::assume_role_expiry,
             commands::get_audit,

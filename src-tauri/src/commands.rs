@@ -262,6 +262,80 @@ pub async fn activate_sso_role(state: State<'_, App>) -> Result<u64, String> {
     lock(&state.assumed_role_expiry).insert(connection_id, expiry);
     Ok(expiry)
 }
+#[derive(Serialize)]
+pub struct SsoAccount {
+    pub id: String,
+    pub name: String,
+}
+#[derive(Serialize)]
+pub struct SsoRole {
+    pub name: String,
+}
+fn sso_client_for(state: &App) -> Result<(aws_sdk_sso::Client, String), String> {
+    let connection = state.current_connection()?;
+    let region = connection.sso_region.ok_or("当前连接未配置 SSO Region")?;
+    let token = state
+        .secrets
+        .get(&format!("sso:{}", connection.id))?
+        .ok_or("未找到 SSO access token，请重新进行 SSO 授权")?;
+    let client = aws_sdk_sso::Client::from_conf(
+        aws_sdk_sso::config::Builder::new()
+            .region(aws_sdk_sso::config::Region::new(region))
+            .build(),
+    );
+    Ok((client, token))
+}
+#[tauri::command]
+pub async fn list_sso_accounts(state: State<'_, App>) -> Result<Vec<SsoAccount>, String> {
+    let (client, token) = sso_client_for(&state)?;
+    let mut next = None;
+    let mut accounts = Vec::new();
+    loop {
+        let output = client
+            .list_accounts()
+            .access_token(&token)
+            .set_next_token(next)
+            .send()
+            .await
+            .map_err(|e| format!("读取 SSO 账户失败：{e}"))?;
+        accounts.extend(output.account_list().iter().map(|item| SsoAccount {
+            id: item.account_id().unwrap_or_default().to_owned(),
+            name: item.account_name().unwrap_or_default().to_owned(),
+        }));
+        next = output.next_token().map(ToOwned::to_owned);
+        if next.is_none() {
+            break;
+        }
+    }
+    Ok(accounts)
+}
+#[tauri::command]
+pub async fn list_sso_roles(
+    state: State<'_, App>,
+    account_id: String,
+) -> Result<Vec<SsoRole>, String> {
+    let (client, token) = sso_client_for(&state)?;
+    let mut next = None;
+    let mut roles = Vec::new();
+    loop {
+        let output = client
+            .list_account_roles()
+            .access_token(&token)
+            .account_id(&account_id)
+            .set_next_token(next)
+            .send()
+            .await
+            .map_err(|e| format!("读取 SSO 角色失败：{e}"))?;
+        roles.extend(output.role_list().iter().map(|item| SsoRole {
+            name: item.role_name().unwrap_or_default().to_owned(),
+        }));
+        next = output.next_token().map(ToOwned::to_owned);
+        if next.is_none() {
+            break;
+        }
+    }
+    Ok(roles)
+}
 
 /// 激活当前连接的 AssumeRole 临时 Client。Client 仅驻留进程内，连接配置保存时自动失效；
 /// 不写入 AWS CLI 文件或 connections.json。
