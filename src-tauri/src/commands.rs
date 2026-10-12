@@ -907,6 +907,41 @@ pub async fn select_csv_object(
         .await
         .map_err(|e| e.to_string())
 }
+#[tauri::command]
+pub fn start_select_csv_object(
+    state: State<App>,
+    app: tauri::AppHandle,
+    bucket: String,
+    key: String,
+    expression: String,
+) -> Result<String, String> {
+    if expression.trim().is_empty() {
+        return Err("SQL 查询不能为空".to_string());
+    }
+    let (client, _) = state.current_client()?;
+    let id = Uuid::new_v4().to_string();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = TaskShared::new(tasks::new_task_info(&id, TaskKind::Query, &bucket, 1, 0));
+    lock(&state.inner).tasks.insert(
+        id.clone(),
+        TaskEntry {
+            cancel: cancel.clone(),
+            shared: shared.clone(),
+            retry: Arc::new(Mutex::new(None)),
+        },
+    );
+    tasks::spawn_select_query(
+        app,
+        client,
+        id.clone(),
+        bucket,
+        key,
+        expression,
+        cancel,
+        shared,
+    );
+    Ok(id)
+}
 
 #[tauri::command]
 pub async fn list_objects(

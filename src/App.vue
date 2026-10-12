@@ -447,7 +447,7 @@ async function savePreviewText(content: string) {
   try { await api.saveTextObject(store.browse.bucket, store.browse.prefix + previewName.value, content); previewData.value = { kind: "text", content }; await store.refresh(); store.toast("文本已保存"); }
   catch (e) { store.toast(errorMessage(e), "error"); }
 }
-async function runSelect() { if (!objectDetail.value) return; try { selectResult.value = await api.selectCsvObject(store.browse.bucket, objectDetail.value.key, selectExpression.value); } catch (e) { store.toast(errorMessage(e), "error"); } }
+async function runSelect() { if (!objectDetail.value) return; try { const id = await api.startSelectCsvObject(store.browse.bucket, objectDetail.value.key, selectExpression.value); store.tasksStore.open = true; const unlisten = await listen<import("./types").SelectResult & { id: string; error: string | null }>("query-result", (event) => { if (event.payload.id !== id) return; if (event.payload.error) store.toast(event.payload.error, "error"); else selectResult.value = event.payload; unlisten(); }); } catch (e) { store.toast(errorMessage(e), "error"); } }
 
 async function detail(entry: Entry) {
   try {

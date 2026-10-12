@@ -39,6 +39,7 @@ pub enum TaskKind {
     Search,
     Zip,
     Stats,
+    Query,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -89,6 +90,15 @@ pub struct UsageResultEvent {
     pub id: String,
     pub object_count: u64,
     pub total_bytes: u64,
+    pub error: Option<String>,
+}
+#[derive(Clone, Serialize)]
+pub struct QueryResultEvent {
+    pub id: String,
+    pub records: String,
+    pub bytes_scanned: u64,
+    pub bytes_processed: u64,
+    pub bytes_returned: u64,
     pub error: Option<String>,
 }
 
@@ -259,6 +269,60 @@ pub fn spawn_usage_stats(
                     id,
                     object_count: count,
                     total_bytes: bytes,
+                    error,
+                },
+            );
+        });
+    });
+}
+
+pub fn spawn_select_query(
+    app: tauri::AppHandle,
+    client: aws_sdk_s3::Client,
+    id: String,
+    bucket: String,
+    key: String,
+    expression: String,
+    cancel: Arc<AtomicBool>,
+    shared: Arc<TaskShared>,
+) {
+    let probe = shared.clone();
+    schedule(&probe, move || {
+        tauri::async_runtime::spawn(async move {
+            mark_running(&shared);
+            lock(&shared.info).current_file = Some(key.clone());
+            let outcome =
+                easys3_core::object::select_csv_object(&client, &bucket, &key, &expression).await;
+            let (records, scanned, processed, returned, error) = match outcome {
+                Ok(result) if !cancel.load(Ordering::Relaxed) => {
+                    let mut info = lock(&shared.info);
+                    info.files_total = 1;
+                    info.files_done = 1;
+                    info.bytes_total = result.bytes_scanned;
+                    info.bytes_done = result.bytes_scanned;
+                    (
+                        result.records,
+                        result.bytes_scanned,
+                        result.bytes_processed,
+                        result.bytes_returned,
+                        None,
+                    )
+                }
+                Ok(_) | Err(CoreError::Cancelled) => (String::new(), 0, 0, 0, None),
+                Err(error) => {
+                    record_failure(&shared, &key, error.to_string());
+                    (String::new(), 0, 0, 0, Some(error.to_string()))
+                }
+            };
+            finish_task(&app, &cancel, &shared);
+            let _ = app.emit(
+                "query-result",
+                QueryResultEvent {
+                    id,
+                    records,
+                    bytes_scanned: scanned,
+                    bytes_processed: processed,
+                    bytes_returned: returned,
                     error,
                 },
             );

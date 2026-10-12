@@ -56,6 +56,7 @@ export const bucketWebsite = (bucket: string) => invoke<import("./types").Websit
 export const saveBucketWebsite = (bucket: string, website: import("./types").WebsiteConfig) => invoke<void>("save_bucket_website", { bucket, website });
 export const objectLock = (bucket: string) => invoke<import("./types").ObjectLockInfo>("object_lock", { bucket });
 export const selectCsvObject = (bucket: string, key: string, expression: string) => invoke<import("./types").SelectResult>("select_csv_object", { bucket, key, expression });
+export const startSelectCsvObject = (bucket: string, key: string, expression: string) => invoke<string>("start_select_csv_object", { bucket, key, expression });
 export const listObjects = (bucket: string, prefix: string, token: string | null) =>
   invoke<ListResult>("list_objects", { bucket, prefix, token });
 export const countObjects = (bucket: string, prefix: string) =>
