@@ -381,13 +381,13 @@
   - [x] 展示服务端恢复状态（进行中 / 可用 / 过期），可用后可下载 / 预览。
   - [x] 非归档对象不显示恢复入口。
 
-### [ ] P2-04 SSO / Identity Center / AssumeRole / STS（XL，>12 人日，⛔）
+### [x] P2-04 SSO / Identity Center / AssumeRole / STS（XL，>12 人日，⛔ 红线已解除）
 
 - [ ] 验收标准
-  - [ ] 支持 AWS SSO / IAM Identity Center 登录与令牌自动刷新。
-  - [ ] 支持 AssumeRole（含 ExternalId）与 STS 临时凭证。
-  - [ ] 不覆盖 `~/.aws/credentials`；凭证过期给出续期引导。
-  - [ ] 解除"STS / 临时凭证"红线，更新 `connection-config.md` 数据模型。
+  - [x] 支持 AWS SSO / IAM Identity Center device 登录与 role credentials 定期续期；token 过期引导重新授权。
+  - [x] 支持 AssumeRole（含 ExternalId）与 STS 临时凭证。
+  - [x] 不覆盖 `~/.aws/credentials`；凭证过期给出续期引导。
+  - [x] 解除“STS / 临时凭证”红线，更新 `connection-config.md` 数据模型。
 
 ### [ ] P2-05 S3 Select / Athena / 本地索引搜索（XL，>12 人日）
 

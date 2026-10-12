@@ -200,6 +200,7 @@ async function confirmQuit() {
 
 // 前缀筛选防抖（规格：前缀语义，非子串搜索）
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
+let ssoRefreshTimer: ReturnType<typeof setInterval> | undefined;
 function onFilterInput(e: Event) {
   const v = (e.target as HTMLInputElement).value;
   if (filterTimer) clearTimeout(filterTimer);
@@ -234,7 +235,13 @@ onMounted(async () => {
     ev.preventDefault();
     showCloseConfirm.value = true;
   });
+  // P2-04：已配置 SSO 账户/角色时定期尝试续期；失败不打断当前界面，连接对话框会给出明确续期引导。
+  ssoRefreshTimer = setInterval(() => {
+    const connection = store.currentConnection();
+    if (connection?.sso_account_id && connection.sso_role_name) void api.activateSsoRole().catch(() => {});
+  }, 10 * 60 * 1000);
 });
+onBeforeUnmount(() => { if (ssoRefreshTimer) clearInterval(ssoRefreshTimer); });
 
 function onGlobalKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); showCommandPalette.value = true; commandQuery.value = ""; }

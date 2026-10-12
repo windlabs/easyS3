@@ -51,6 +51,11 @@ interface ConnectionConfig {
 - `read_only` 为连接级持久化开关，默认 `false`。开启后前端隐藏上传、删除、复制、移动和新建文件夹等写入口，保留浏览、下载、预览与复制 Key。
 - Rust 命令层必须二次强制拒绝写操作，防止前端绕过；提示“当前连接处于只读模式，不能执行写操作”。
 
+## P2-04 SSO / AssumeRole 临时凭据
+
+- 连接可选保存 Role ARN / ExternalId，或 IAM Identity Center 的 Start URL、Region、Account ID、Role Name；只保存非敏感定位信息，STS/SSO 临时凭据均只在进程内。
+- SSO device authorization access token 使用 SecretStore 加密保存，不修改 `~/.aws/credentials`。SSO role credentials 与 AssumeRole client 激活后在内存使用；SSO role credentials 每 10 分钟尝试续期，token 过期时明确提示用户重新设备授权。
+
 ## 切换与删除行为
 
 - `current_connection_id` 持久化；重启后自动恢复上次选中的连接。

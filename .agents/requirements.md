@@ -175,6 +175,11 @@
 - 非限定单桶且非只读连接可编辑 Bucket Policy、CORS、Lifecycle 和静态网站配置；Object Lock 仅显示状态，不提供不可逆写入；ACL 写入继续禁止。
 - 保存前展示行级 diff，保存失败尝试恢复加载时快照并保留本地编辑内容。
 
+## P2-04 SSO / AssumeRole / STS（2026-10）
+
+- 支持 AssumeRole（含 ExternalId）与 IAM Identity Center device authorization。SSO 可发现账户/角色、加密保存 access token、激活内存 S3 临时 Client；不覆盖 AWS CLI 凭据。
+- 临时凭据到期时间在 UI 显示；SSO role credentials 定期续期，SSO token 过期时引导用户重新设备授权。
+
 ## P1-19 图片缩略图 / 网格视图（2026-10）
 
 - 对象列表可切换表格与网格视图，偏好本地记忆。网格中图片对象按需加载缩略图并在当前会话缓存；非图片/加载失败/超出安全预览上限显示类型图标，不读取超大完整图片。
