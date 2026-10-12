@@ -301,6 +301,90 @@ pub async fn put_bucket_lifecycle(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebsiteDto {
+    pub index_suffix: String,
+    pub error_key: Option<String>,
+}
+pub async fn get_bucket_website(client: &Client, bucket: &str) -> Result<WebsiteDto, CoreError> {
+    let out = client
+        .get_bucket_website()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(WebsiteDto {
+        index_suffix: out
+            .index_document()
+            .map(|doc| doc.suffix())
+            .unwrap_or_default()
+            .to_owned(),
+        error_key: out
+            .error_document()
+            .map(|doc| doc.key())
+            .map(ToOwned::to_owned),
+    })
+}
+pub async fn put_bucket_website(
+    client: &Client,
+    bucket: &str,
+    website: WebsiteDto,
+) -> Result<(), CoreError> {
+    if website.index_suffix.trim().is_empty() {
+        return Err(CoreError::Other("静态网站首页文件不能为空".into()));
+    }
+    let mut config = aws_sdk_s3::types::WebsiteConfiguration::builder().index_document(
+        aws_sdk_s3::types::IndexDocument::builder()
+            .suffix(website.index_suffix)
+            .build()
+            .map_err(|e| CoreError::Other(format!("静态网站配置无效：{e}")))?,
+    );
+    if let Some(key) = website.error_key.filter(|key| !key.trim().is_empty()) {
+        config = config.error_document(
+            aws_sdk_s3::types::ErrorDocument::builder()
+                .key(key)
+                .build()
+                .map_err(|e| CoreError::Other(format!("静态网站配置无效：{e}")))?,
+        );
+    }
+    client
+        .put_bucket_website()
+        .bucket(bucket)
+        .website_configuration(config.build())
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    Ok(())
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct ObjectLockDto {
+    pub enabled: bool,
+    pub mode: Option<String>,
+    pub days: Option<i32>,
+    pub years: Option<i32>,
+}
+pub async fn get_object_lock(client: &Client, bucket: &str) -> Result<ObjectLockDto, CoreError> {
+    let out = client
+        .get_object_lock_configuration()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    let rule = out
+        .object_lock_configuration()
+        .and_then(|config| config.rule())
+        .and_then(|rule| rule.default_retention());
+    Ok(ObjectLockDto {
+        enabled: out
+            .object_lock_configuration()
+            .and_then(|config| config.object_lock_enabled())
+            .is_some(),
+        mode: rule.and_then(|r| r.mode()).map(|m| m.as_str().to_owned()),
+        days: rule.and_then(|r| r.days()),
+        years: rule.and_then(|r| r.years()),
+    })
+}
+
 pub async fn bucket_versioning(
     client: &Client,
     bucket: &str,

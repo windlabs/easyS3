@@ -52,6 +52,9 @@ export const bucketCors = (bucket: string) => invoke<import("./types").CorsRule[
 export const saveBucketCors = (bucket: string, rules: import("./types").CorsRule[]) => invoke<void>("save_bucket_cors", { bucket, rules });
 export const bucketLifecycle = (bucket: string) => invoke<import("./types").LifecycleRule[]>("bucket_lifecycle", { bucket });
 export const saveBucketLifecycle = (bucket: string, rules: import("./types").LifecycleRule[]) => invoke<void>("save_bucket_lifecycle", { bucket, rules });
+export const bucketWebsite = (bucket: string) => invoke<import("./types").WebsiteConfig>("bucket_website", { bucket });
+export const saveBucketWebsite = (bucket: string, website: import("./types").WebsiteConfig) => invoke<void>("save_bucket_website", { bucket, website });
+export const objectLock = (bucket: string) => invoke<import("./types").ObjectLockInfo>("object_lock", { bucket });
 export const listObjects = (bucket: string, prefix: string, token: string | null) =>
   invoke<ListResult>("list_objects", { bucket, prefix, token });
 export const countObjects = (bucket: string, prefix: string) =>

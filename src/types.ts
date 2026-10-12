@@ -64,6 +64,8 @@ export interface UsageStats { object_count: number; total_bytes: number; }
 export interface AuditEntry { at: number; connection: string; bucket: string; action: string; status: string; detail: string; }
 export interface CorsRule { id: string | null; allowed_origins: string[]; allowed_methods: string[]; allowed_headers: string[]; expose_headers: string[]; max_age_seconds: number | null; }
 export interface LifecycleRule { id: string; prefix: string; enabled: boolean; expiration_days: number | null; }
+export interface WebsiteConfig { index_suffix: string; error_key: string | null; }
+export interface ObjectLockInfo { enabled: boolean; mode: string | null; days: number | null; years: number | null; }
 
 export interface MultipartUploadInfo {
   key: string;

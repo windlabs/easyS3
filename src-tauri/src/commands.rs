@@ -859,6 +859,42 @@ pub async fn save_bucket_lifecycle(
         .await
         .map_err(|e| e.to_string())
 }
+#[tauri::command]
+pub async fn bucket_website(
+    state: State<'_, App>,
+    bucket: String,
+) -> Result<easys3_core::object::WebsiteDto, String> {
+    require_writable(&state)?;
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::get_bucket_website(&client, &bucket)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn save_bucket_website(
+    state: State<'_, App>,
+    bucket: String,
+    website: easys3_core::object::WebsiteDto,
+) -> Result<(), String> {
+    require_writable(&state)?;
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_client()?;
+    easys3_core::object::put_bucket_website(&client, &bucket, website)
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn object_lock(
+    state: State<'_, App>,
+    bucket: String,
+) -> Result<easys3_core::object::ObjectLockDto, String> {
+    reject_limited_connection(&state)?;
+    let (client, _) = state.current_control_client()?;
+    easys3_core::object::get_object_lock(&client, &bucket)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 pub async fn list_objects(
