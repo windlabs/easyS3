@@ -100,6 +100,13 @@ pub fn get_state(state: State<App>) -> StateDto {
         current_connection_id: inner.file.current_connection_id.clone(),
     }
 }
+#[tauri::command]
+pub async fn test_assume_role(state: State<'_, App>, role_arn: String, external_id: Option<String>) -> Result<(), String> {
+    let connection = state.current_connection()?;
+    let client = easys3_core::s3::assume_role_client(&connection, &role_arn, external_id.as_deref()).await.map_err(|e| e.to_string())?;
+    client.list_buckets().send().await.map_err(|e| format!("临时凭据验证失败：{e}"))?;
+    Ok(())
+}
 
 #[tauri::command]
 pub fn get_audit(

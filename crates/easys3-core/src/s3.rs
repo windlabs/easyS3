@@ -103,6 +103,60 @@ pub async fn test_connection(p: &ConnectionConfig) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// AssumeRole 仅在内存构造临时 S3 Client，不修改 AWS CLI 文件或本地连接凭据。
+pub async fn assume_role_client(
+    p: &ConnectionConfig,
+    role_arn: &str,
+    external_id: Option<&str>,
+) -> Result<Client, CoreError> {
+    if role_arn.trim().is_empty() {
+        return Err(CoreError::InvalidConfig("Role ARN 不能为空".into()));
+    }
+    let base = aws_sdk_sts::config::Builder::new()
+        .region(aws_sdk_sts::config::Region::new(p.region.clone()))
+        .credentials_provider(aws_sdk_sts::config::Credentials::new(
+            &p.access_key,
+            &p.secret_key,
+            None,
+            None,
+            "easys3-static",
+        ))
+        .endpoint_url(p.endpoint_url.clone())
+        .build();
+    let sts = aws_sdk_sts::Client::from_conf(base);
+    let mut request = sts
+        .assume_role()
+        .role_arn(role_arn)
+        .role_session_name("easyS3");
+    if let Some(external_id) = external_id.filter(|value| !value.is_empty()) {
+        request = request.external_id(external_id);
+    }
+    let output = request
+        .send()
+        .await
+        .map_err(|e| CoreError::Other(format!("AssumeRole 失败：{e}")))?;
+    let credentials = output
+        .credentials()
+        .ok_or_else(|| CoreError::Other("AssumeRole 未返回临时凭据".into()))?;
+    let mut builder = aws_sdk_s3::Config::builder()
+        .endpoint_url(p.endpoint_url.trim())
+        .region(Region::new(p.region.clone()))
+        .credentials_provider(Credentials::new(
+            credentials.access_key_id(),
+            credentials.secret_access_key(),
+            Some(credentials.session_token().to_owned()),
+            None,
+            "easys3-assume-role",
+        ))
+        .force_path_style(p.force_path_style)
+        .behavior_version(BehaviorVersion::latest())
+        .stalled_stream_protection(StalledStreamProtectionConfig::enabled().build());
+    if let Some(path) = p.ca_cert_path.as_deref().filter(|path| !path.is_empty()) {
+        builder = builder.http_client(build_ca_http_client(path)?);
+    }
+    Ok(Client::from_conf(builder.build()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
