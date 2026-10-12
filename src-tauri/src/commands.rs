@@ -365,6 +365,7 @@ pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
                 default_bucket: None,
                 role_arn: None,
                 external_id: None,
+                recycle_prefix: None,
                 ca_cert_path: None,
                 last_test: None,
             })
@@ -994,9 +995,20 @@ pub async fn list_objects(
     token: Option<String>,
 ) -> Result<ListResult, String> {
     let (client, _) = state.current_control_client()?;
-    easys3_core::list::list_objects(&client, &bucket, &prefix, token.as_deref())
+    let mut result = easys3_core::list::list_objects(&client, &bucket, &prefix, token.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // 连接回收站默认隐藏，避免污染正常浏览；用户可通过修改连接设置查看对应前缀。
+    if let Some(recycle) = state
+        .current_connection()?
+        .recycle_prefix
+        .filter(|value| !value.is_empty())
+    {
+        result
+            .entries
+            .retain(|entry| !entry.key.starts_with(&recycle));
+    }
+    Ok(result)
 }
 
 /// 删除前缀前的对象计数（规格：确认框必须显示实际数量；含随前缀一并删除的目录占位对象）

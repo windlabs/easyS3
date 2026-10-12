@@ -175,6 +175,7 @@ mod tests {
             default_bucket: None,
             role_arn: None,
             external_id: None,
+            recycle_prefix: None,
             ca_cert_path: None,
             last_test: None,
         }

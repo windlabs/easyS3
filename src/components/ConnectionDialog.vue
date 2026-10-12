@@ -62,6 +62,7 @@ function toPayload(): ConnectionConfig {
     default_bucket: form.default_bucket?.trim() || null,
     role_arn: form.role_arn?.trim() || null,
     external_id: form.external_id?.trim() || null,
+    recycle_prefix: form.recycle_prefix?.trim() || null,
     ca_cert_path: form.ca_cert_path?.trim() || null,
     last_test: form.last_test ?? null,
   };
@@ -226,6 +227,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         </div>
         <div class="form-row"><label>Role ARN（可选）</label><input v-model="form.role_arn" class="input" placeholder="arn:aws:iam::123456789012:role/RoleName" /></div>
         <div class="form-row"><label>External ID（可选）</label><input v-model="form.external_id" class="input" placeholder="第三方信任策略要求时填写" /></div>
+        <div class="form-row"><label>回收站前缀（可选）</label><input v-model="form.recycle_prefix" class="input" placeholder="例如 .easys3-trash/；启用后删除先移入此处" /></div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>
       <div class="modal-foot">

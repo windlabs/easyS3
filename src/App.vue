@@ -49,6 +49,7 @@ const uploadVerifyAfter = ref(false);
 const showDeleteConfirm = ref(false);
 const deleteItems = ref<FsItem[]>([]);
 const deleteCount = ref(0);
+const deleteToRecycle = ref(false);
 
 // ---------- 下载冲突 ----------
 const showConflict = ref(false);
@@ -410,6 +411,7 @@ async function requestDelete(items: FsItem[]) {
     }
     deleteItems.value = items;
     deleteCount.value = count;
+    deleteToRecycle.value = false;
     showDeleteConfirm.value = true;
   } catch (e) {
     store.toast(errorMessage(e), "error");
@@ -422,7 +424,13 @@ function deleteSelection() {
 
 async function confirmDelete() {
   try {
-    await api.startDelete(store.browse.bucket, deleteItems.value);
+    const recyclePrefix = store.currentConnection()?.recycle_prefix;
+    if (deleteToRecycle.value && recyclePrefix) {
+      const prefix = `${recyclePrefix.replace(/\/+$/, "")}/${new Date().toISOString().replace(/[:.]/g, "-")}/`;
+      await api.startCopy(store.browse.bucket, deleteItems.value, prefix, store.browse.bucket, "overwrite", null, true);
+    } else {
+      await api.startDelete(store.browse.bucket, deleteItems.value);
+    }
     store.tasksStore.open = true;
     store.selection.clear();
     showDeleteConfirm.value = false;
@@ -994,6 +1002,7 @@ async function removeBucket() {
         即将删除 <b>{{ deleteCount }}</b> 个对象（含文件夹内的全部对象）。
       </p>
       <p class="warn-text">删除操作不可恢复，请确认。</p>
+      <label v-if="store.currentConnection()?.recycle_prefix" class="upload-storage"><input v-model="deleteToRecycle" type="checkbox" /> 移入连接回收站（{{ store.currentConnection()?.recycle_prefix }}）</label>
     </ConfirmDialog>
 
     <ConfirmDialog

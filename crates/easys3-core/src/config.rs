@@ -38,6 +38,8 @@ pub struct ConnectionConfig {
     pub role_arn: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recycle_prefix: Option<String>,
     /// 可选；服务使用自签证书时指定 CA 证书（PEM 编码）文件路径
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_cert_path: Option<String>,
@@ -207,6 +209,7 @@ pub fn connection_fields_changed(old: &ConnectionConfig, new: &ConnectionConfig)
         || old.default_bucket != new.default_bucket
         || old.role_arn != new.role_arn
         || old.external_id != new.external_id
+        || old.recycle_prefix != new.recycle_prefix
         || old.force_path_style != new.force_path_style
         || old.ca_cert_path != new.ca_cert_path
 }
@@ -245,6 +248,7 @@ mod tests {
             default_bucket: None,
             role_arn: None,
             external_id: None,
+            recycle_prefix: None,
             ca_cert_path: None,
             last_test: None,
         }
