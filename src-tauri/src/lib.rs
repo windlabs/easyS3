@@ -49,6 +49,7 @@ pub fn run() {
             commands::test_assume_role,
             commands::start_sso_device_authorization,
             commands::complete_sso_device_authorization,
+            commands::sso_token_expiry,
             commands::activate_sso_role,
             commands::list_sso_accounts,
             commands::list_sso_roles,

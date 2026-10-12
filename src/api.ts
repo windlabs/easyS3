@@ -27,6 +27,7 @@ export const getState = () => invoke<StateDto>("get_state");
 export const testAssumeRole = (roleArn: string, externalId: string | null) => invoke<void>("test_assume_role", { role_arn: roleArn, external_id: externalId });
 export const startSsoDeviceAuthorization = (startUrl: string, region: string) => invoke<{ verification_uri: string; verification_uri_complete: string | null; user_code: string; expires_in: number }>("start_sso_device_authorization", { start_url: startUrl, region });
 export const completeSsoDeviceAuthorization = () => invoke<number>("complete_sso_device_authorization");
+export const ssoTokenExpiry = () => invoke<number | null>("sso_token_expiry");
 export const activateSsoRole = () => invoke<number>("activate_sso_role");
 export const listSsoAccounts = () => invoke<{ id: string; name: string }[]>("list_sso_accounts");
 export const listSsoRoles = (accountId: string) => invoke<{ name: string }[]>("list_sso_roles", { account_id: accountId });

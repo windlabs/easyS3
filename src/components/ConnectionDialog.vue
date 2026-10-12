@@ -34,6 +34,7 @@ const assumeRoleExpiry = ref<number | null>(null);
 const ssoDevice = ref<{ verification_uri: string; verification_uri_complete: string | null; user_code: string; expires_in: number } | null>(null);
 const ssoAccounts = ref<{ id: string; name: string }[]>([]);
 const ssoRoles = ref<{ name: string }[]>([]);
+const ssoTokenExpiry = ref<number | null>(null);
 
 watch(
   () => props.modelValue,
@@ -54,6 +55,8 @@ watch(
     confirmDelete.value = false;
     assumeRoleExpiry.value = null;
     ssoDevice.value = null;
+    ssoTokenExpiry.value = null;
+    if (form.sso_start_url) void api.ssoTokenExpiry().then((value) => { ssoTokenExpiry.value = value; }).catch(() => {});
     if (form.role_arn) void api.assumeRoleExpiry().then((value) => { assumeRoleExpiry.value = value; }).catch(() => {});
   },
 );
@@ -124,7 +127,7 @@ async function startSsoAuthorization() {
 }
 async function completeSsoAuthorization() {
   testing.value = true;
-  try { const seconds = await api.completeSsoDeviceAuthorization(); testOk.value = true; testMsg.value = `SSO 授权完成，token 有效期约 ${Math.floor(seconds / 60)} 分钟`; ssoDevice.value = null; }
+  try { const seconds = await api.completeSsoDeviceAuthorization(); ssoTokenExpiry.value = Math.floor(Date.now() / 1000) + seconds; testOk.value = true; testMsg.value = `SSO 授权完成，token 有效期约 ${Math.floor(seconds / 60)} 分钟`; ssoDevice.value = null; }
   catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
   finally { testing.value = false; }
 }
@@ -263,6 +266,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         <div class="form-row"><label>SSO Role Name（可选）</label><input v-model="form.sso_role_name" class="input" placeholder="例如 AdministratorAccess" /></div>
         <div v-if="form.sso_start_url" class="form-row"><button class="btn sm" :disabled="testing" @click="loadSsoAccounts">读取 SSO 账户</button><select v-if="ssoAccounts.length" v-model="form.sso_account_id" class="select" @change="loadSsoRoles"><option v-for="account in ssoAccounts" :key="account.id" :value="account.id">{{ account.name }} ({{ account.id }})</option></select><select v-if="ssoRoles.length" v-model="form.sso_role_name" class="select"><option v-for="role in ssoRoles" :key="role.name" :value="role.name">{{ role.name }}</option></select></div>
         <div v-if="ssoDevice" class="form-hint">请访问：{{ ssoDevice.verification_uri_complete || ssoDevice.verification_uri }}<br />设备码：<b>{{ ssoDevice.user_code }}</b>（{{ ssoDevice.expires_in }} 秒内有效）</div>
+        <div v-if="ssoTokenExpiry" class="form-hint">SSO token 到期：{{ formatTime(new Date(ssoTokenExpiry * 1000).toISOString()) }}<span v-if="ssoTokenExpiry * 1000 <= Date.now()">（已过期，请重新开始 SSO 授权）</span></div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>
       <div class="modal-foot">

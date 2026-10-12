@@ -196,7 +196,17 @@ pub async fn complete_sso_device_authorization(state: State<'_, App>) -> Result<
     state
         .secrets
         .set(&format!("sso:{}", pending.connection_id), token)?;
-    Ok(output.expires_in().max(0) as u64)
+    let seconds = output.expires_in().max(0) as u64;
+    lock(&state.sso_token_expiry).insert(
+        pending.connection_id,
+        easys3_core::audit::now().saturating_add(seconds),
+    );
+    Ok(seconds)
+}
+#[tauri::command]
+pub fn sso_token_expiry(state: State<App>) -> Result<Option<u64>, String> {
+    let id = state.current_connection()?.id;
+    Ok(lock(&state.sso_token_expiry).get(&id).copied())
 }
 #[tauri::command]
 pub async fn activate_sso_role(state: State<'_, App>) -> Result<u64, String> {
