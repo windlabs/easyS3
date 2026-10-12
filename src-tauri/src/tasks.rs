@@ -284,6 +284,7 @@ pub fn spawn_select_query(
     bucket: String,
     key: String,
     expression: String,
+    format: String,
     cancel: Arc<AtomicBool>,
     shared: Arc<TaskShared>,
 ) {
@@ -292,8 +293,11 @@ pub fn spawn_select_query(
         tauri::async_runtime::spawn(async move {
             mark_running(&shared);
             lock(&shared.info).current_file = Some(key.clone());
-            let outcome =
-                easys3_core::object::select_csv_object(&client, &bucket, &key, &expression).await;
+            let outcome = if format == "json" {
+                easys3_core::object::select_json_object(&client, &bucket, &key, &expression).await
+            } else {
+                easys3_core::object::select_csv_object(&client, &bucket, &key, &expression).await
+            };
             let (records, scanned, processed, returned, error) = match outcome {
                 Ok(result) if !cancel.load(Ordering::Relaxed) => {
                     let mut info = lock(&shared.info);
