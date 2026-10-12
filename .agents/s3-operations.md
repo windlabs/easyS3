@@ -206,3 +206,13 @@
 
 - 支持 Bucket Policy、CORS、Lifecycle（前缀、启用、过期天数、转储存储类别）和静态网站 JSON 编辑；Object Lock 仅只读展示，ACL 写入保持红线。
 - 编辑器保存前显示原始文本与行级新增/删除 diff。保存失败后尝试以加载时快照恢复上一版本，回滚结果在中文错误中说明；本地编辑缓冲不清空。
+
+## 29. S3 Select 与本地 Inventory 查询（P2-05）
+
+- 对单个 CSV（首行列名）或 JSON Lines 对象可执行 S3 Select SQL；查询作为可取消后台任务，展示 scanned/processed/returned 字节和费用提示，结果可导出 CSV/JSON。
+- 可导入 S3 Inventory CSV 建立本地元数据索引，索引搜索不调用 S3 List API，支持 Key、`size>`、`class=` 与 `AND` 条件，结果可导航回对象所在桶/目录。
+
+## 30. 成本 / 用量视图（P2-06）
+
+- 有 Billing 权限时，使用 Cost Explorer 展示最近 30 天真实费用趋势、按 AWS 服务和用量类型组的费用（涵盖存储、请求、传输、取回等服务账单分类），可导出 JSON。
+- 无 Cost Explorer 权限时，降级扫描当前连接桶的对象数/字节量并明确提示其不代表费用。S3 原始账单不提供通用 Bucket 维度费用，Bucket 级展示为字节量，真实归属需 Cost Allocation Tags 或 CUR。

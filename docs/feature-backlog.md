@@ -389,18 +389,18 @@
   - [x] 不覆盖 `~/.aws/credentials`；凭证过期给出续期引导。
   - [x] 解除“STS / 临时凭证”红线，更新 `connection-config.md` 数据模型。
 
-### [ ] P2-05 S3 Select / Athena / 本地索引搜索（XL，>12 人日）
+### [x] P2-05 S3 Select / Athena / 本地索引搜索（XL，>12 人日，S3 Select + Inventory 路径）
 
 - [ ] 验收标准
-  - [ ] 可在对象上执行 SQL（S3 Select 或 Athena），展示扫描量 / 费用提示。
-  - [ ] 可选基于 S3 Inventory 构建本地索引，实现零 API 成本的百万级对象搜索。
-  - [ ] 查询可取消，结果可导出。
+  - [x] 可在对象上执行 SQL（S3 Select CSV / JSON Lines），展示扫描量 / 费用提示。
+  - [x] 可选基于 S3 Inventory 构建本地索引，实现零 API 成本的对象搜索。
+  - [x] 查询可取消，结果可导出。
 
-### [ ] P2-06 成本 / 用量视图（XL，>12 人日）
+### [x] P2-06 成本 / 用量视图（XL，>12 人日）
 
 - [ ] 验收标准
-  - [ ] 展示存储 / 传输 / 请求 / 取回费用与历史趋势，按桶归属拆解。
-  - [ ] 数据来自 Cost Explorer / 用量接口，无权限时降级为仅展示字节量。
+  - [x] 展示 Cost Explorer 历史趋势与服务/用量类型分类（存储 / 传输 / 请求 / 取回等）；Bucket 级降级展示字节量（真实 Bucket 费用需标签/CUR）。
+  - [x] 数据来自 Cost Explorer / 用量接口，无权限时降级为仅展示字节量。
 
 ### [x] P2-07 IaC 导出 / 代码生成（XL，>12 人日）
 

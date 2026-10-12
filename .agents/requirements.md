@@ -180,6 +180,11 @@
 - 支持 AssumeRole（含 ExternalId）与 IAM Identity Center device authorization。SSO 可发现账户/角色、加密保存 access token、激活内存 S3 临时 Client；不覆盖 AWS CLI 凭据。
 - 临时凭据到期时间在 UI 显示；SSO role credentials 定期续期，SSO token 过期时引导用户重新设备授权。
 
+## P2-05 / P2-06 查询与成本（2026-10）
+
+- 支持 S3 Select SQL（CSV/JSON Lines）和本地 S3 Inventory 索引搜索；查询可取消、展示扫描量并导出结果。
+- 成本视图优先使用 Cost Explorer 展示趋势/服务/用量分类；无权限降级为桶对象数/字节量。S3 原始账单不提供通用 Bucket 维度费用，Bucket 费用归属依赖标签或 CUR。
+
 ## P1-19 图片缩略图 / 网格视图（2026-10）
 
 - 对象列表可切换表格与网格视图，偏好本地记忆。网格中图片对象按需加载缩略图并在当前会话缓存；非图片/加载失败/超出安全预览上限显示类型图标，不读取超大完整图片。
