@@ -15,11 +15,13 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 aws-sdk-s3 = "1"
 aws-sdk-sts = "1"
+aws-sdk-costexplorer = "1"
 keyring = "3"
 aes-gcm = "0.10"
 rand = "0.8"
 sha2 = "0.10"
 zip = "0.6"
+chrono = { version = "0.4", features = ["clock"] }
 
 [profile.release]
 lto = true

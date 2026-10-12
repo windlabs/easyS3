@@ -51,6 +51,7 @@ pub fn run() {
             commands::get_audit,
             commands::export_audit,
             commands::record_audit,
+            commands::cost_overview,
             commands::generate_iac,
             commands::generate_sdk_snippet,
             commands::open_browser_window,

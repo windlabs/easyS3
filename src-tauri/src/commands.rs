@@ -215,6 +215,50 @@ pub fn record_audit(
     state.record_audit(connection, bucket, action, status, detail);
     Ok(())
 }
+#[derive(Serialize)]
+pub struct CostPoint {
+    pub date: String,
+    pub amount: String,
+    pub unit: String,
+}
+#[tauri::command]
+pub async fn cost_overview(state: State<'_, App>) -> Result<Vec<CostPoint>, String> {
+    use aws_sdk_costexplorer::types::{DateInterval, Granularity};
+    use chrono::{Duration, Utc};
+    let connection = state.current_connection()?;
+    let client = easys3_core::s3::build_cost_client(&connection);
+    let end = Utc::now().date_naive();
+    let start = end - Duration::days(30);
+    let interval = DateInterval::builder()
+        .start(start.to_string())
+        .end(end.to_string())
+        .build()
+        .map_err(|e| format!("构建成本查询失败：{e}"))?;
+    let result = client
+        .get_cost_and_usage()
+        .time_period(interval)
+        .granularity(Granularity::Daily)
+        .metrics("UnblendedCost")
+        .send()
+        .await
+        .map_err(|e| format!("无法读取 Cost Explorer（请检查 Billing 权限）：{e}"))?;
+    Ok(result
+        .results_by_time()
+        .iter()
+        .filter_map(|item| {
+            let metric = item.total()?.get("UnblendedCost")?;
+            Some(CostPoint {
+                date: item
+                    .time_period()
+                    .map(|period| period.start())
+                    .unwrap_or_default()
+                    .to_string(),
+                amount: metric.amount().unwrap_or_default().to_string(),
+                unit: metric.unit().unwrap_or_default().to_string(),
+            })
+        })
+        .collect())
+}
 
 #[tauri::command]
 pub fn open_browser_window(app: tauri::AppHandle) -> Result<(), String> {

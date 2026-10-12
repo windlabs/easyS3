@@ -157,6 +157,21 @@ pub async fn assume_role_client(
     Ok(Client::from_conf(builder.build()))
 }
 
+/// Cost Explorer 固定使用 AWS 公有服务端点与 us-east-1；不复用 S3 兼容 endpoint。
+pub fn build_cost_client(p: &ConnectionConfig) -> aws_sdk_costexplorer::Client {
+    let config = aws_sdk_costexplorer::config::Builder::new()
+        .region(aws_sdk_costexplorer::config::Region::new("us-east-1"))
+        .credentials_provider(aws_sdk_costexplorer::config::Credentials::new(
+            &p.access_key,
+            &p.secret_key,
+            None,
+            None,
+            "easys3-static",
+        ))
+        .build();
+    aws_sdk_costexplorer::Client::from_conf(config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
