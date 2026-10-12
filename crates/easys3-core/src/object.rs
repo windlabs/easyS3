@@ -15,6 +15,7 @@ pub struct ObjectDetail {
     pub content_type: Option<String>,
     pub metadata: Vec<MetadataEntry>,
     pub restore_status: Option<String>,
+    pub server_side_encryption: Option<String>,
 }
 
 pub async fn restore_archived_object(
@@ -725,6 +726,9 @@ pub async fn head_object(
         content_type: out.content_type().map(ToOwned::to_owned),
         metadata,
         restore_status: out.restore().map(ToOwned::to_owned),
+        server_side_encryption: out
+            .server_side_encryption()
+            .map(|value| value.as_str().to_owned()),
     })
 }
 

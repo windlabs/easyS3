@@ -41,6 +41,13 @@ pub struct UploadOptions {
     pub throttle: Option<Arc<Throttle>>,
     /// 上传完成后 HeadObject 回读 ETag；multipart 复合 ETag 不做 MD5 比较。
     pub verify_after_upload: bool,
+    pub encryption: Option<ServerEncryption>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ServerEncryption {
+    S3,
+    Kms { key_id: Option<String> },
 }
 
 /// multipart 上传的可持久化检查点。调用方负责将它写入应用配置目录。
@@ -122,6 +129,21 @@ pub async fn upload_file_resumable(
             .content_length(size as i64);
         if let Some(class) = opts.storage_class {
             request = request.storage_class(class);
+        }
+        if let Some(encryption) = opts.encryption.as_ref() {
+            request = match encryption {
+                ServerEncryption::S3 => {
+                    request.server_side_encryption(aws_sdk_s3::types::ServerSideEncryption::Aes256)
+                }
+                ServerEncryption::Kms { key_id } => {
+                    let request = request
+                        .server_side_encryption(aws_sdk_s3::types::ServerSideEncryption::AwsKms);
+                    match key_id.as_deref() {
+                        Some(key_id) => request.ssekms_key_id(key_id),
+                        None => request,
+                    }
+                }
+            };
         }
         request.send().await.map_err(|e| classify(&e))?;
         if opts.verify_after_upload {
@@ -226,6 +248,21 @@ async fn upload_multipart(
             let mut request = client.create_multipart_upload().bucket(bucket).key(key);
             if let Some(ref class) = opts.storage_class {
                 request = request.storage_class(class.clone());
+            }
+            if let Some(encryption) = opts.encryption.as_ref() {
+                request = match encryption {
+                    ServerEncryption::S3 => request
+                        .server_side_encryption(aws_sdk_s3::types::ServerSideEncryption::Aes256),
+                    ServerEncryption::Kms { key_id } => {
+                        let request = request.server_side_encryption(
+                            aws_sdk_s3::types::ServerSideEncryption::AwsKms,
+                        );
+                        match key_id.as_deref() {
+                            Some(key_id) => request.ssekms_key_id(key_id),
+                            None => request,
+                        }
+                    }
+                };
             }
             let response = request.send().await.map_err(|e| classify(&e))?;
             (

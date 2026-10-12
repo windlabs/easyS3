@@ -44,6 +44,8 @@ const uploadPaths = ref<string[]>([]);
 const uploadStorageClass = ref("STANDARD");
 const uploadChangesOnly = ref(false);
 const uploadVerifyAfter = ref(false);
+const uploadEncryption = ref("none");
+const uploadKmsKeyId = ref("");
 
 // ---------- 删除确认 ----------
 const showDeleteConfirm = ref(false);
@@ -308,9 +310,9 @@ async function confirmUpload() {
   if (!uploadPaths.value.length) return;
   try {
     if (uploadChangesOnly.value && uploadPlan.value) {
-      await api.startUploadPlan(store.browse.bucket, uploadPlan.value, uploadStorageClass.value, uploadVerifyAfter.value);
+      await api.startUploadPlan(store.browse.bucket, uploadPlan.value, uploadStorageClass.value, uploadVerifyAfter.value, uploadEncryption.value, uploadKmsKeyId.value || null);
     } else {
-      await api.startUpload(store.browse.bucket, store.browse.prefix, uploadPaths.value, uploadStorageClass.value, uploadVerifyAfter.value);
+      await api.startUpload(store.browse.bucket, store.browse.prefix, uploadPaths.value, uploadStorageClass.value, uploadVerifyAfter.value, uploadEncryption.value, uploadKmsKeyId.value || null);
     }
     store.tasksStore.open = true;
     showUploadConfirm.value = false;
@@ -999,6 +1001,8 @@ async function removeBucket() {
           <option value="DEEP_ARCHIVE">DEEP_ARCHIVE</option>
         </select>
        </label>
+       <label class="upload-storage">服务端加密<select v-model="uploadEncryption" class="select"><option value="none">不加密</option><option value="sse-s3">SSE-S3（AES-256）</option><option value="sse-kms">SSE-KMS</option></select></label>
+       <input v-if="uploadEncryption === 'sse-kms'" v-model="uploadKmsKeyId" class="input" placeholder="KMS Key ID（可选）" />
     </ConfirmDialog>
 
     <ConfirmDialog

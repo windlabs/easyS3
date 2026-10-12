@@ -560,6 +560,7 @@ pub fn resume_task(state: State<App>, app: tauri::AppHandle, id: String) -> Resu
                 state.transfer_settings(),
                 state.upload_throttle.clone(),
                 false,
+                None,
                 Some(changed),
                 Some(checkpoints),
                 Some(completed),
@@ -1202,6 +1203,7 @@ pub fn start_sync_upload(
         state.transfer_settings(),
         state.upload_throttle.clone(),
         false,
+        None,
         None,
         None,
         None,
@@ -1864,6 +1866,7 @@ pub async fn plan_upload_changes(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn start_upload(
     state: State<App>,
     app: tauri::AppHandle,
@@ -1872,6 +1875,8 @@ pub fn start_upload(
     paths: Vec<String>,
     storage: Option<String>,
     verify: bool,
+    encryption: Option<String>,
+    kms_key_id: Option<String>,
 ) -> Result<String, String> {
     require_writable(&state)?;
     let connection = state.current_connection()?;
@@ -1913,6 +1918,14 @@ pub fn start_upload(
         .map(|value| value.parse::<aws_sdk_s3::types::StorageClass>())
         .transpose()
         .map_err(|_| "不支持的存储类别".to_string())?;
+    let encryption = match encryption.as_deref().unwrap_or("none") {
+        "none" => None,
+        "sse-s3" => Some(easys3_core::upload::ServerEncryption::S3),
+        "sse-kms" => Some(easys3_core::upload::ServerEncryption::Kms {
+            key_id: kms_key_id.filter(|value| !value.trim().is_empty()),
+        }),
+        _ => return Err("不支持的服务端加密类型".to_string()),
+    };
     let settings = state.transfer_settings();
     let storage_name = storage
         .clone()
@@ -1978,6 +1991,7 @@ pub fn start_upload(
         settings,
         state.upload_throttle.clone(),
         verify,
+        encryption,
         Some(checkpoints),
         None,
         Some(completed),
@@ -1986,6 +2000,7 @@ pub fn start_upload(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_upload_plan(
     state: State<'_, App>,
     app: tauri::AppHandle,
@@ -1993,6 +2008,8 @@ pub async fn start_upload_plan(
     plan: UploadPlan,
     storage: Option<String>,
     verify: bool,
+    encryption: Option<String>,
+    kms_key_id: Option<String>,
 ) -> Result<String, String> {
     require_writable(&state)?;
     let files: Vec<_> = plan
@@ -2043,6 +2060,14 @@ pub async fn start_upload_plan(
         .map(str::parse)
         .transpose()
         .map_err(|_| "不支持的存储类别".to_string())?;
+    let encryption = match encryption.as_deref().unwrap_or("none") {
+        "none" => None,
+        "sse-s3" => Some(easys3_core::upload::ServerEncryption::S3),
+        "sse-kms" => Some(easys3_core::upload::ServerEncryption::Kms {
+            key_id: kms_key_id.filter(|value| !value.trim().is_empty()),
+        }),
+        _ => return Err("不支持的服务端加密类型".to_string()),
+    };
     tasks::spawn_upload(
         app,
         client,
@@ -2054,6 +2079,7 @@ pub async fn start_upload_plan(
         state.transfer_settings(),
         state.upload_throttle.clone(),
         verify,
+        encryption,
         None,
         None,
         None,
@@ -2267,6 +2293,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 settings,
                 state.upload_throttle.clone(),
                 false,
+                None,
                 None,
                 None,
                 None,

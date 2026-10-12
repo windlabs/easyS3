@@ -754,6 +754,7 @@ pub fn spawn_upload(
     settings: TransferSettings,
     throttle: Arc<Throttle>,
     verify_after_upload: bool,
+    encryption: Option<easys3_core::upload::ServerEncryption>,
     checkpoints: Option<CheckpointSink>,
     resume_checkpoints: Option<Arc<HashMap<String, MultipartCheckpoint>>>,
     completed: Option<CompletionSink>,
@@ -777,6 +778,7 @@ pub fn spawn_upload(
                     part_size: settings.part_size_bytes(),
                     throttle: Some(throttle.clone()),
                     verify_after_upload,
+                    encryption: encryption.clone(),
                 };
                 // 瞬时错误自动重试次数（设置页可配，默认 3；0 = 关闭）
                 let auto_retries = settings.auto_retry_count as usize;

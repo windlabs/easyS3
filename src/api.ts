@@ -127,10 +127,10 @@ export const planUpload = (paths: string[], prefix: string) =>
 export const pasteClipboardImage = () => invoke<string | null>("paste_clipboard_image");
 export const planUploadChanges = (bucket: string, paths: string[], prefix: string) =>
   invoke<UploadPlan>("plan_upload_changes", { bucket, paths, prefix });
-export const startUpload = (bucket: string, prefix: string, paths: string[], storage: string | null, verify: boolean) =>
-  invoke<string>("start_upload", { bucket, prefix, paths, storage, verify });
-export const startUploadPlan = (bucket: string, plan: UploadPlan, storage: string | null, verify: boolean) =>
-  invoke<string>("start_upload_plan", { bucket, plan, storage, verify });
+export const startUpload = (bucket: string, prefix: string, paths: string[], storage: string | null, verify: boolean, encryption: string, kmsKeyId: string | null) =>
+  invoke<string>("start_upload", { bucket, prefix, paths, storage, verify, encryption, kms_key_id: kmsKeyId });
+export const startUploadPlan = (bucket: string, plan: UploadPlan, storage: string | null, verify: boolean, encryption: string, kmsKeyId: string | null) =>
+  invoke<string>("start_upload_plan", { bucket, plan, storage, verify, encryption, kms_key_id: kmsKeyId });
 export const startDownload = (
   bucket: string,
   items: FsItem[],
