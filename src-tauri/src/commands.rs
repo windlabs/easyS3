@@ -188,6 +188,22 @@ pub fn generate_iac(bucket: String, format: String) -> Result<String, String> {
         _ => Err("导出格式仅支持 terraform、cloudformation、cdk".to_string()),
     }
 }
+#[tauri::command]
+pub fn import_inventory(state: State<App>, path: String) -> Result<usize, String> {
+    let index = easys3_core::inventory::import_csv(std::path::Path::new(&path))
+        .map_err(|e| e.to_string())?;
+    let count = index.entries.len();
+    easys3_core::inventory::save(&state.inventory_path, &index).map_err(|e| e.to_string())?;
+    *lock(&state.inventory) = index;
+    Ok(count)
+}
+#[tauri::command]
+pub fn search_inventory(
+    state: State<App>,
+    query: String,
+) -> Vec<easys3_core::inventory::InventoryEntry> {
+    easys3_core::inventory::search(&lock(&state.inventory), &query)
+}
 
 #[tauri::command]
 pub fn generate_sdk_snippet(

@@ -7,6 +7,7 @@ use crate::secrets::SecretStore;
 use crate::tasks::TaskEntry;
 use easys3_core::audit::{self, AuditFile};
 use easys3_core::config::{load_connections, save_connections, ConnectionConfig, ConnectionsFile};
+use easys3_core::inventory::{self, InventoryIndex};
 use easys3_core::resume::{load_resume_file, save_resume_file, ResumeFile};
 use easys3_core::settings::{load_settings, TransferSettings};
 use easys3_core::throttle::Throttle;
@@ -24,6 +25,8 @@ pub struct App {
     pub resume: Arc<Mutex<ResumeFile>>,
     pub audit_path: PathBuf,
     pub audit: Mutex<AuditFile>,
+    pub inventory_path: PathBuf,
+    pub inventory: Mutex<InventoryIndex>,
     /// 传输设置快照（保存设置时更新；任务启动时读取快照）
     pub settings: Mutex<TransferSettings>,
     /// 全局上传限速（跨任务共享，保存设置热调整）
@@ -77,6 +80,7 @@ impl App {
         let settings_path = dir.join("settings.json");
         let resume_path = dir.join("transfers.json");
         let audit_path = dir.join("history.json");
+        let inventory_path = dir.join("inventory.json");
         let resume = load_resume_file(&resume_path).unwrap_or_default();
         let settings = load_settings(&settings_path);
         let upload_throttle = Arc::new(Throttle::new(settings.upload_limit_kbps * 1024));
@@ -90,6 +94,8 @@ impl App {
             resume: Arc::new(Mutex::new(resume)),
             audit_path: audit_path.clone(),
             audit: Mutex::new(audit::load(&audit_path).unwrap_or_default()),
+            inventory_path: inventory_path.clone(),
+            inventory: Mutex::new(inventory::load(&inventory_path).unwrap_or_default()),
             settings: Mutex::new(settings),
             upload_throttle,
             download_throttle,

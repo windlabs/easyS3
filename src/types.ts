@@ -71,6 +71,7 @@ export interface LifecycleRule { id: string; prefix: string; enabled: boolean; e
 export interface WebsiteConfig { index_suffix: string; error_key: string | null; }
 export interface ObjectLockInfo { enabled: boolean; mode: string | null; days: number | null; years: number | null; }
 export interface SelectResult { records: string; bytes_scanned: number; bytes_processed: number; bytes_returned: number; }
+export interface InventoryEntry { bucket: string; key: string; size: number; last_modified: string; storage_class: string; }
 
 export interface MultipartUploadInfo {
   key: string;

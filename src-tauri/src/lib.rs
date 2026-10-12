@@ -54,6 +54,8 @@ pub fn run() {
             commands::cost_overview,
             commands::cost_by_service,
             commands::generate_iac,
+            commands::import_inventory,
+            commands::search_inventory,
             commands::generate_sdk_snippet,
             commands::open_browser_window,
             commands::export_connections,

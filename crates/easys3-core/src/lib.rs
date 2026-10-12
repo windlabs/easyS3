@@ -13,6 +13,7 @@ pub mod config;
 pub mod delete;
 pub mod download;
 pub mod error;
+pub mod inventory;
 pub mod list;
 pub mod object;
 pub mod plan;

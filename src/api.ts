@@ -33,6 +33,8 @@ export const costOverview = () => invoke<{ date: string; amount: string; unit: s
 export const costByService = () => invoke<{ service: string; amount: string; unit: string }[]>("cost_by_service");
 export const generateIac = (bucket: string, format: string) => invoke<string>("generate_iac", { bucket, format });
 export const generateSdkSnippet = (bucket: string, key: string, language: string) => invoke<string>("generate_sdk_snippet", { bucket, key, language });
+export const importInventory = (path: string) => invoke<number>("import_inventory", { path });
+export const searchInventory = (query: string) => invoke<import("./types").InventoryEntry[]>("search_inventory", { query });
 export const openBrowserWindow = () => invoke<void>("open_browser_window");
 export const exportConnections = (path: string, secrets: boolean, password: string | null) => invoke<void>("export_connections", { path, secrets, password });
 export const importConnections = (path: string, overwrite: boolean, password: string | null) => invoke<number>("import_connections", { path, overwrite, password });
