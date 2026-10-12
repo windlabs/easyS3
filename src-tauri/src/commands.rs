@@ -221,6 +221,12 @@ pub struct CostPoint {
     pub amount: String,
     pub unit: String,
 }
+#[derive(Serialize)]
+pub struct CostGroup {
+    pub service: String,
+    pub amount: String,
+    pub unit: String,
+}
 #[tauri::command]
 pub async fn cost_overview(state: State<'_, App>) -> Result<Vec<CostPoint>, String> {
     use aws_sdk_costexplorer::types::{DateInterval, Granularity};
@@ -258,6 +264,52 @@ pub async fn cost_overview(state: State<'_, App>) -> Result<Vec<CostPoint>, Stri
             })
         })
         .collect())
+}
+#[tauri::command]
+pub async fn cost_by_service(state: State<'_, App>) -> Result<Vec<CostGroup>, String> {
+    use aws_sdk_costexplorer::types::{
+        DateInterval, Granularity, GroupDefinition, GroupDefinitionType,
+    };
+    use chrono::{Duration, Utc};
+    let connection = state.current_connection()?;
+    let client = easys3_core::s3::build_cost_client(&connection);
+    let end = Utc::now().date_naive();
+    let start = end - Duration::days(30);
+    let interval = DateInterval::builder()
+        .start(start.to_string())
+        .end(end.to_string())
+        .build()
+        .map_err(|e| format!("构建成本查询失败：{e}"))?;
+    let group = GroupDefinition::builder().r#type(GroupDefinitionType::Dimension).key("SERVICE").build();
+    let result = client
+        .get_cost_and_usage()
+        .time_period(interval)
+        .granularity(Granularity::Monthly)
+        .metrics("UnblendedCost")
+        .group_by(group)
+        .send()
+        .await
+        .map_err(|e| format!("无法读取 Cost Explorer（请检查 Billing 权限）：{e}"))?;
+    let mut out = Vec::new();
+    for period in result.results_by_time() {
+        for group in period.groups() {
+            if let Some(metric) = group
+                .metrics()
+                .and_then(|metrics| metrics.get("UnblendedCost"))
+            {
+                out.push(CostGroup {
+                    service: group
+                        .keys()
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "未知服务".into()),
+                    amount: metric.amount().unwrap_or_default().to_string(),
+                    unit: metric.unit().unwrap_or_default().to_string(),
+                });
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[tauri::command]

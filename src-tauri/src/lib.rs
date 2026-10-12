@@ -52,6 +52,7 @@ pub fn run() {
             commands::export_audit,
             commands::record_audit,
             commands::cost_overview,
+            commands::cost_by_service,
             commands::generate_iac,
             commands::generate_sdk_snippet,
             commands::open_browser_window,
