@@ -25,6 +25,7 @@ import type {
 
 export const getState = () => invoke<StateDto>("get_state");
 export const testAssumeRole = (roleArn: string, externalId: string | null) => invoke<void>("test_assume_role", { role_arn: roleArn, external_id: externalId });
+export const activateAssumeRole = () => invoke<void>("activate_assume_role");
 export const getAudit = (connection: string | null, since: number | null) => invoke<import("./types").AuditEntry[]>("get_audit", { connection, since });
 export const exportAudit = (path: string, connection: string | null, since: number | null) => invoke<void>("export_audit", { path, connection, since });
 export const recordAudit = (bucket: string, action: string, status: string, detail: string) => invoke<void>("record_audit", { bucket, action, status, detail });

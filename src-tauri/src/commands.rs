@@ -119,6 +119,29 @@ pub async fn test_assume_role(
     Ok(())
 }
 
+/// 激活当前连接的 AssumeRole 临时 Client。Client 仅驻留进程内，连接配置保存时自动失效；
+/// 不写入 AWS CLI 文件或 connections.json。
+#[tauri::command]
+pub async fn activate_assume_role(state: State<'_, App>) -> Result<(), String> {
+    let connection = state.current_connection()?;
+    let role_arn = connection
+        .role_arn
+        .as_deref()
+        .ok_or("当前连接未配置 Role ARN")?;
+    let client = easys3_core::s3::assume_role_client(
+        &connection,
+        role_arn,
+        connection.external_id.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let mut inner = lock(&state.inner);
+    inner.clients.insert(connection.id.clone(), client.clone());
+    // 临时凭据已带权限，控制面也复用该 Client；S3 SDK 请求超时由服务端/连接层处理。
+    inner.control_clients.insert(connection.id, client);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_audit(
     state: State<App>,

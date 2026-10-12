@@ -96,6 +96,12 @@ async function testAssumeRole() {
   catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
   finally { testing.value = false; }
 }
+async function activateAssumeRole() {
+  testing.value = true; testMsg.value = "";
+  try { await api.saveConnection(toPayload()); await api.activateAssumeRole(); testOk.value = true; testMsg.value = "AssumeRole 已激活，当前会话将使用临时凭据"; emit("saved"); }
+  catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
+  finally { testing.value = false; }
+}
 
 async function save() {
   saving.value = true;
@@ -236,6 +242,7 @@ const { onMousedown, onClick } = useMaskClose(close);
           {{ testing ? "测试中…" : "测试连接" }}
         </button>
         <button v-if="form.role_arn" class="btn" :disabled="testing" @click="testAssumeRole">验证 AssumeRole</button>
+        <button v-if="form.role_arn" class="btn" :disabled="testing" @click="activateAssumeRole">激活临时凭据</button>
         <button class="btn" @click="close">取消</button>
         <button class="btn primary" :disabled="saving" @click="save">
           {{ saving ? "保存中…" : "保存" }}
