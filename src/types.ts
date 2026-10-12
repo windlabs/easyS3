@@ -66,6 +66,7 @@ export interface CorsRule { id: string | null; allowed_origins: string[]; allowe
 export interface LifecycleRule { id: string; prefix: string; enabled: boolean; expiration_days: number | null; transition_days: number | null; transition_class: string | null; }
 export interface WebsiteConfig { index_suffix: string; error_key: string | null; }
 export interface ObjectLockInfo { enabled: boolean; mode: string | null; days: number | null; years: number | null; }
+export interface SelectResult { records: string; bytes_scanned: number; bytes_processed: number; bytes_returned: number; }
 
 export interface MultipartUploadInfo {
   key: string;

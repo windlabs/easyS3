@@ -404,6 +404,84 @@ pub async fn get_object_lock(client: &Client, bucket: &str) -> Result<ObjectLock
     })
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SelectResult {
+    pub records: String,
+    pub bytes_scanned: u64,
+    pub bytes_processed: u64,
+    pub bytes_returned: u64,
+}
+pub async fn select_csv_object(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    expression: &str,
+) -> Result<SelectResult, CoreError> {
+    use aws_sdk_s3::types::{
+        CompressionType, CsvInput, CsvOutput, ExpressionType, FileHeaderInfo, InputSerialization,
+        OutputSerialization, SelectObjectContentEventStream,
+    };
+    let mut output = client
+        .select_object_content()
+        .bucket(bucket)
+        .key(key)
+        .expression_type(ExpressionType::Sql)
+        .expression(expression)
+        .input_serialization(
+            InputSerialization::builder()
+                .csv(
+                    CsvInput::builder()
+                        .file_header_info(FileHeaderInfo::Use)
+                        .build(),
+                )
+                .compression_type(CompressionType::None)
+                .build(),
+        )
+        .output_serialization(
+            OutputSerialization::builder()
+                .csv(CsvOutput::builder().build())
+                .build(),
+        )
+        .send()
+        .await
+        .map_err(|e| classify(&e))?;
+    let mut records = String::new();
+    let mut scanned = 0;
+    let mut processed = 0;
+    let mut returned = 0;
+    while let Some(event) = output
+        .payload
+        .recv()
+        .await
+        .map_err(|e| CoreError::Other(format!("读取 S3 Select 结果失败：{e}")))?
+    {
+        match event {
+            SelectObjectContentEventStream::Records(value) => {
+                if let Some(payload) = value.payload {
+                    records.push_str(
+                        std::str::from_utf8(payload.as_ref())
+                            .map_err(|_| CoreError::Other("S3 Select 返回非 UTF-8 数据".into()))?,
+                    );
+                }
+            }
+            SelectObjectContentEventStream::Stats(value) => {
+                if let Some(details) = value.details {
+                    scanned = details.bytes_scanned.unwrap_or(0) as u64;
+                    processed = details.bytes_processed.unwrap_or(0) as u64;
+                    returned = details.bytes_returned.unwrap_or(0) as u64;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(SelectResult {
+        records,
+        bytes_scanned: scanned,
+        bytes_processed: processed,
+        bytes_returned: returned,
+    })
+}
+
 pub async fn bucket_versioning(
     client: &Client,
     bucket: &str,

@@ -76,6 +76,7 @@ pub fn run() {
             commands::bucket_website,
             commands::save_bucket_website,
             commands::object_lock,
+            commands::select_csv_object,
             commands::list_objects,
             commands::count_objects,
             commands::prefix_usage,

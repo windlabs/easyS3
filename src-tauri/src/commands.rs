@@ -895,6 +895,18 @@ pub async fn object_lock(
         .await
         .map_err(|e| e.to_string())
 }
+#[tauri::command]
+pub async fn select_csv_object(
+    state: State<'_, App>,
+    bucket: String,
+    key: String,
+    expression: String,
+) -> Result<easys3_core::object::SelectResult, String> {
+    let (client, _) = state.current_client()?;
+    easys3_core::object::select_csv_object(&client, &bucket, &key, &expression)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 pub async fn list_objects(

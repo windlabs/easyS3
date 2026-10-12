@@ -113,6 +113,9 @@ const policyDiff = computed(() => {
 });
 const codeExportFormat = ref("terraform");
 const codeExportResult = ref("");
+const showSelect = ref(false);
+const selectExpression = ref("SELECT * FROM s3object s LIMIT 100");
+const selectResult = ref<import("./types").SelectResult | null>(null);
 const commandQuery = ref("");
 const isReadOnly = computed(() => !!store.currentConnection()?.read_only);
 
@@ -444,6 +447,7 @@ async function savePreviewText(content: string) {
   try { await api.saveTextObject(store.browse.bucket, store.browse.prefix + previewName.value, content); previewData.value = { kind: "text", content }; await store.refresh(); store.toast("文本已保存"); }
   catch (e) { store.toast(errorMessage(e), "error"); }
 }
+async function runSelect() { if (!objectDetail.value) return; try { selectResult.value = await api.selectCsvObject(store.browse.bucket, objectDetail.value.key, selectExpression.value); } catch (e) { store.toast(errorMessage(e), "error"); } }
 
 async function detail(entry: Entry) {
   try {
@@ -894,6 +898,7 @@ async function removeBucket() {
           </button>
           <button class="btn" :disabled="!store.selection.size" @click="downloadZipSelection">下载 ZIP</button>
           <button class="btn" :disabled="!store.selection.size" @click="openPresign('get')">分享链接</button>
+          <button class="btn" :disabled="store.selection.size !== 1" @click="objectDetail = store.browse.entries.find((entry) => store.selection.has(entry.key)) ? ({ key: store.browse.entries.find((entry) => store.selection.has(entry.key))!.key, size: 0, last_modified: null, e_tag: null, storage_class: null, content_type: null, metadata: [] }) : null; showSelect = !!objectDetail">S3 Select</button>
            <button v-if="!isReadOnly" class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, false)">
             复制
           </button>
@@ -1006,6 +1011,7 @@ async function removeBucket() {
 
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" @save-text="savePreviewText" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
+    <div v-if="showSelect" class="modal-mask"><div class="modal policy-modal"><div class="modal-head">S3 Select（CSV）</div><div class="modal-body copy-form"><textarea v-model="selectExpression" class="input" /><button class="btn" @click="runSelect">执行查询</button><p v-if="selectResult" class="muted">扫描 {{ formatBytes(selectResult.bytes_scanned) }} · 处理 {{ formatBytes(selectResult.bytes_processed) }} · 返回 {{ formatBytes(selectResult.bytes_returned) }}</p><pre v-if="selectResult" class="policy-diff">{{ selectResult.records }}</pre></div><div class="modal-foot"><button class="btn" @click="showSelect = false">关闭</button></div></div></div>
     <SettingsDialog v-model="showSettings" />
     <div v-if="showUsage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶 / 前缀用量统计</div><div class="modal-body"><p class="warn-text">大桶统计会产生较多列表请求，可能耗时较长。</p><p v-if="usageLoading">正在递归扫描…</p><template v-else-if="usageStats"><p>对象数：<b>{{ usageStats.object_count }}</b></p><p>总大小：<b>{{ formatBytes(usageStats.total_bytes) }}</b></p></template></div><div class="modal-foot"><button class="btn" @click="showUsage = false">关闭</button><button class="btn" :disabled="usageLoading" @click="loadUsage">重新统计</button><button class="btn primary" :disabled="!usageStats" @click="exportUsage">导出 JSON</button></div></div></div>
     <div v-if="updateMessage" class="update-toast" @click="updateMessage = ''">{{ updateMessage }}</div>
