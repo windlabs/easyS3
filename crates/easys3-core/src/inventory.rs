@@ -18,38 +18,72 @@ pub struct InventoryIndex {
 pub fn import_csv(path: &Path) -> Result<InventoryIndex, CoreError> {
     let mut entries = Vec::new();
     let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
+        .has_headers(true)
         .flexible(true)
         .from_path(path)
         .map_err(|e| CoreError::Other(format!("读取 Inventory CSV 失败：{e}")))?;
+    let headers = reader
+        .headers()
+        .map_err(|e| CoreError::Other(format!("解析 Inventory CSV 表头失败：{e}")))?
+        .clone();
+    let column = |name: &str, fallback: usize| {
+        headers
+            .iter()
+            .position(|header| header.eq_ignore_ascii_case(name))
+            .unwrap_or(fallback)
+    };
+    let bucket_column = column("Bucket", 0);
+    let key_column = column("Key", 1);
+    let size_column = column("Size", 3);
+    let modified_column = column("LastModifiedDate", 4);
+    let storage_column = headers
+        .iter()
+        .position(|header| {
+            header.eq_ignore_ascii_case("StorageClass") || header.eq_ignore_ascii_case("Storage")
+        })
+        .unwrap_or(8);
     for row in reader.records() {
         let row = row.map_err(|e| CoreError::Other(format!("解析 Inventory CSV 失败：{e}")))?;
-        if row.len() < 10 || row.get(0) == Some("Bucket") {
+        if row.len() < 2 {
             continue;
         }
         entries.push(InventoryEntry {
-            bucket: row.get(0).unwrap_or_default().to_string(),
-            key: row.get(1).unwrap_or_default().to_string(),
-            size: row.get(3).unwrap_or_default().parse().unwrap_or(0),
-            last_modified: row.get(4).unwrap_or_default().to_string(),
-            storage_class: row.get(9).unwrap_or_default().to_string(),
+            bucket: row.get(bucket_column).unwrap_or_default().to_string(),
+            key: row.get(key_column).unwrap_or_default().to_string(),
+            size: row
+                .get(size_column)
+                .unwrap_or_default()
+                .parse()
+                .unwrap_or(0),
+            last_modified: row.get(modified_column).unwrap_or_default().to_string(),
+            storage_class: row.get(storage_column).unwrap_or_default().to_string(),
         });
     }
     Ok(InventoryIndex { entries })
 }
 pub fn search(index: &InventoryIndex, query: &str) -> Vec<InventoryEntry> {
     let query = query.trim();
-    let (needle, min_size) = if let Some(value) = query.strip_prefix("size>") {
-        (String::new(), parse_size(value).ok())
-    } else {
-        (query.to_ascii_lowercase(), None)
-    };
+    let mut needle = String::new();
+    let mut min_size = None;
+    let mut storage_class = None;
+    for clause in query.split("AND").map(str::trim) {
+        if let Some(value) = clause.strip_prefix("size>") {
+            min_size = parse_size(value).ok();
+        } else if let Some(value) = clause.strip_prefix("class=") {
+            storage_class = Some(value.trim().to_ascii_uppercase());
+        } else if !clause.is_empty() {
+            needle = clause.to_ascii_lowercase();
+        }
+    }
     index
         .entries
         .iter()
         .filter(|entry| {
             (needle.is_empty() || entry.key.to_ascii_lowercase().contains(&needle))
                 && min_size.is_none_or(|size| entry.size > size)
+                && storage_class
+                    .as_ref()
+                    .is_none_or(|class| entry.storage_class.to_ascii_uppercase() == *class)
         })
         .cloned()
         .collect()
@@ -98,7 +132,7 @@ mod tests {
     fn parses_and_searches() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("i.csv");
-        fs::write(&p,"bucket,key,version,size,last,etag,islatest,delete,storage,sc,owner,acl\nb,\"k,test.log\",,12,now,,,,STANDARD,,,\n").unwrap();
+        fs::write(&p,"bucket,key,version,size,last,etag,islatest,delete,storage,sc,owner,acl\nb,\"k,test.log\",,12,now,,,STANDARD,,,,\n").unwrap();
         let index = import_csv(&p).unwrap();
         assert_eq!(search(&index, "k,test").len(), 1);
         assert_eq!(search(&index, "size>10B").len(), 1);
