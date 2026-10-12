@@ -92,6 +92,9 @@ const presignKey = ref("");
 const presignUrls = ref<string[]>([]);
 const showUsage = ref(false);
 const usageStats = ref<UsageStats | null>(null);
+const showCost = ref(false);
+const costBuckets = ref<{ bucket: string; stats: UsageStats }[]>([]);
+const costLoading = ref(false);
 const usageLoading = ref(false);
 const gridView = ref(localStorage.getItem("easys3.grid-view") === "true");
 function toggleGridView() { gridView.value = !gridView.value; localStorage.setItem("easys3.grid-view", String(gridView.value)); }
@@ -647,6 +650,7 @@ async function openFile(entry: Entry) {
   }
 }
 async function loadUsage() { usageLoading.value = true; usageStats.value = null; try { const id = await api.startPrefixUsage(store.browse.bucket, store.browse.prefix); store.tasksStore.open = true; const unlisten = await listen<{ id: string; object_count: number; total_bytes: number; error: string | null }>("usage-result", (event) => { if (event.payload.id !== id) return; if (event.payload.error) store.toast(event.payload.error, "error"); else usageStats.value = { object_count: event.payload.object_count, total_bytes: event.payload.total_bytes }; usageLoading.value = false; unlisten(); }); } catch (e) { store.toast(errorMessage(e), "error"); usageLoading.value = false; } }
+async function loadCostFallback() { costLoading.value = true; costBuckets.value = []; try { for (const bucket of store.browse.buckets) { const stats = await api.prefixUsage(bucket, ""); costBuckets.value.push({ bucket, stats }); } } catch (e) { store.toast(errorMessage(e), "error"); } finally { costLoading.value = false; } }
 async function exportUsage() { if (!usageStats.value) return; const path = await (await import("@tauri-apps/plugin-dialog")).save({ title: "导出用量统计", defaultPath: "easys3-usage.json" }); if (!path) return; try { await api.exportPresignList(path, [JSON.stringify({ bucket: store.browse.bucket, prefix: store.browse.prefix, ...usageStats.value })]); store.toast("统计已导出"); } catch (e) { store.toast(errorMessage(e), "error"); } }
 
 async function openBrowserWindow() {
@@ -777,6 +781,7 @@ async function removeBucket() {
         @set-task-notifications="store.setNotifyOnTaskFinish"
         @check-update="checkForUpdate"
         @open-audit="showAudit = true; loadAudit()"
+        @open-cost="showCost = true; loadCostFallback()"
       />
     </header>
 
@@ -1015,6 +1020,7 @@ async function removeBucket() {
     <div v-if="showSelect" class="modal-mask"><div class="modal policy-modal"><div class="modal-head">S3 Select（CSV）</div><div class="modal-body copy-form"><textarea v-model="selectExpression" class="input" /><p class="copy-hint">扫描量可能产生 S3 Select 费用，请确认查询范围与 SQL 条件。</p><button class="btn" @click="runSelect">执行查询</button><p v-if="selectResult" class="muted">扫描 {{ formatBytes(selectResult.bytes_scanned) }} · 处理 {{ formatBytes(selectResult.bytes_processed) }} · 返回 {{ formatBytes(selectResult.bytes_returned) }}</p><pre v-if="selectResult" class="policy-diff">{{ selectResult.records }}</pre></div><div class="modal-foot"><button class="btn" @click="showSelect = false">关闭</button><button class="btn" :disabled="!selectResult" @click="exportSelectResult(false)">导出 CSV</button><button class="btn primary" :disabled="!selectResult" @click="exportSelectResult(true)">导出 JSON</button></div></div></div>
     <SettingsDialog v-model="showSettings" />
     <div v-if="showUsage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶 / 前缀用量统计</div><div class="modal-body"><p class="warn-text">大桶统计会产生较多列表请求，可能耗时较长。</p><p v-if="usageLoading">正在递归扫描…</p><template v-else-if="usageStats"><p>对象数：<b>{{ usageStats.object_count }}</b></p><p>总大小：<b>{{ formatBytes(usageStats.total_bytes) }}</b></p></template></div><div class="modal-foot"><button class="btn" @click="showUsage = false">关闭</button><button class="btn" :disabled="usageLoading" @click="loadUsage">重新统计</button><button class="btn primary" :disabled="!usageStats" @click="exportUsage">导出 JSON</button></div></div></div>
+    <div v-if="showCost" class="modal-mask"><div class="modal audit-modal"><div class="modal-head">成本 / 用量概览</div><div class="modal-body"><p class="warn-text">当前凭据未接入 Cost Explorer，以下仅为按桶扫描的存储字节量，不代表费用。</p><p v-if="costLoading">正在统计各桶字节量…</p><div v-else class="audit-list"><div v-for="item in costBuckets" :key="item.bucket" class="audit-row"><span>{{ item.bucket }}</span><span>对象 {{ item.stats.object_count }}</span><span>{{ formatBytes(item.stats.total_bytes) }}</span></div></div></div><div class="modal-foot"><button class="btn" @click="showCost = false">关闭</button><button class="btn primary" :disabled="costLoading" @click="loadCostFallback">重新统计</button></div></div></div>
     <div v-if="updateMessage" class="update-toast" @click="updateMessage = ''">{{ updateMessage }}</div>
     <div v-if="showAudit" class="modal-mask"><div class="modal audit-modal"><div class="modal-head">本机操作历史</div><div class="modal-body copy-form"><label>时间范围 <select v-model.number="auditDays" class="select" @change="loadAudit"><option :value="0">全部</option><option :value="1">最近 1 天</option><option :value="7">最近 7 天</option><option :value="30">最近 30 天</option></select></label><div class="audit-list"><div v-for="entry in auditEntries" :key="`${entry.at}-${entry.action}-${entry.detail}`" class="audit-row"><span>{{ new Date(entry.at * 1000).toLocaleString() }}</span><span>{{ entry.connection }} / {{ entry.bucket }}</span><span>{{ entry.action }} · {{ entry.status }}</span><span>{{ entry.detail || '—' }}</span></div><p v-if="!auditEntries.length" class="muted">暂无符合条件的历史记录。</p></div></div><div class="modal-foot"><button class="btn" @click="showAudit = false">关闭</button><button class="btn primary" @click="exportAudit">导出 JSON</button></div></div></div>
     <div v-if="showCodeExport" class="modal-mask"><div class="modal small-modal"><div class="modal-head">导出桶 IaC</div><div class="modal-body copy-form"><label>格式 <select v-model="codeExportFormat" class="select" @change="generateCodeExport"><option value="terraform">Terraform</option><option value="cloudformation">CloudFormation</option><option value="cdk">CDK</option></select></label><textarea class="input code-export" readonly :value="codeExportResult" /></div><div class="modal-foot"><button class="btn" @click="showCodeExport = false">关闭</button><button class="btn primary" @click="copyCodeExport">复制</button></div></div></div>

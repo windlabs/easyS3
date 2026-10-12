@@ -276,6 +276,7 @@ pub fn spawn_usage_stats(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_select_query(
     app: tauri::AppHandle,
     client: aws_sdk_s3::Client,
