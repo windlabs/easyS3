@@ -31,6 +31,7 @@ export const exportAudit = (path: string, connection: string | null, since: numb
 export const recordAudit = (bucket: string, action: string, status: string, detail: string) => invoke<void>("record_audit", { bucket, action, status, detail });
 export const costOverview = () => invoke<{ date: string; amount: string; unit: string }[]>("cost_overview");
 export const costByService = () => invoke<{ service: string; amount: string; unit: string }[]>("cost_by_service");
+export const costByUsageType = () => invoke<{ service: string; amount: string; unit: string }[]>("cost_by_usage_type");
 export const generateIac = (bucket: string, format: string) => invoke<string>("generate_iac", { bucket, format });
 export const generateSdkSnippet = (bucket: string, key: string, language: string) => invoke<string>("generate_sdk_snippet", { bucket, key, language });
 export const importInventory = (path: string) => invoke<number>("import_inventory", { path });

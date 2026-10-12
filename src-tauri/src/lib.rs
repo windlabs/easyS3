@@ -53,6 +53,7 @@ pub fn run() {
             commands::record_audit,
             commands::cost_overview,
             commands::cost_by_service,
+            commands::cost_by_usage_type,
             commands::generate_iac,
             commands::import_inventory,
             commands::search_inventory,
