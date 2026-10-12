@@ -82,6 +82,7 @@ pub fn run() {
             commands::object_lock,
             commands::select_csv_object,
             commands::start_select_csv_object,
+            commands::select_json_object,
             commands::list_objects,
             commands::count_objects,
             commands::prefix_usage,
