@@ -16,19 +16,23 @@ pub struct InventoryIndex {
     pub entries: Vec<InventoryEntry>,
 }
 pub fn import_csv(path: &Path) -> Result<InventoryIndex, CoreError> {
-    let text = fs::read_to_string(path).map_err(|e| CoreError::io("读取 Inventory CSV 失败", e))?;
     let mut entries = Vec::new();
-    for line in text.lines() {
-        let fields: Vec<_> = line.split(',').collect();
-        if fields.len() < 12 || fields[0] == "Bucket" {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_path(path)
+        .map_err(|e| CoreError::Other(format!("读取 Inventory CSV 失败：{e}")))?;
+    for row in reader.records() {
+        let row = row.map_err(|e| CoreError::Other(format!("解析 Inventory CSV 失败：{e}")))?;
+        if row.len() < 10 || row.get(0) == Some("Bucket") {
             continue;
         }
         entries.push(InventoryEntry {
-            bucket: fields[0].to_string(),
-            key: fields[1].to_string(),
-            size: fields[3].parse().unwrap_or(0),
-            last_modified: fields[4].to_string(),
-            storage_class: fields[9].to_string(),
+            bucket: row.get(0).unwrap_or_default().to_string(),
+            key: row.get(1).unwrap_or_default().to_string(),
+            size: row.get(3).unwrap_or_default().parse().unwrap_or(0),
+            last_modified: row.get(4).unwrap_or_default().to_string(),
+            storage_class: row.get(9).unwrap_or_default().to_string(),
         });
     }
     Ok(InventoryIndex { entries })
@@ -64,8 +68,8 @@ mod tests {
     fn parses_and_searches() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("i.csv");
-        fs::write(&p,"bucket,key,version,size,last,etag,islatest,delete,storage,sc,owner,acl\nb,k/test.log,,12,now,,,,STANDARD,,,\n").unwrap();
+        fs::write(&p,"bucket,key,version,size,last,etag,islatest,delete,storage,sc,owner,acl\nb,\"k,test.log\",,12,now,,,,STANDARD,,,\n").unwrap();
         let index = import_csv(&p).unwrap();
-        assert_eq!(search(&index, "test").len(), 1);
+        assert_eq!(search(&index, "k,test").len(), 1);
     }
 }
