@@ -37,14 +37,44 @@ pub fn import_csv(path: &Path) -> Result<InventoryIndex, CoreError> {
     }
     Ok(InventoryIndex { entries })
 }
-pub fn search(index: &InventoryIndex, needle: &str) -> Vec<InventoryEntry> {
-    let needle = needle.to_ascii_lowercase();
+pub fn search(index: &InventoryIndex, query: &str) -> Vec<InventoryEntry> {
+    let query = query.trim();
+    let (needle, min_size) = if let Some(value) = query.strip_prefix("size>") {
+        (String::new(), parse_size(value).ok())
+    } else {
+        (query.to_ascii_lowercase(), None)
+    };
     index
         .entries
         .iter()
-        .filter(|entry| entry.key.to_ascii_lowercase().contains(&needle))
+        .filter(|entry| {
+            (needle.is_empty() || entry.key.to_ascii_lowercase().contains(&needle))
+                && min_size.is_none_or(|size| entry.size > size)
+        })
         .cloned()
         .collect()
+}
+fn parse_size(value: &str) -> Result<u64, CoreError> {
+    let value = value.trim().to_ascii_uppercase();
+    let position = value
+        .find(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(value.len());
+    let number = value[..position]
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| CoreError::Other("Inventory size 条件格式错误".into()))?;
+    let multiplier = match &value[position..] {
+        "" | "B" => 1,
+        "KB" => 1024,
+        "MB" => 1024 * 1024,
+        "GB" => 1024 * 1024 * 1024,
+        _ => {
+            return Err(CoreError::Other(
+                "Inventory size 单位仅支持 B/KB/MB/GB".into(),
+            ))
+        }
+    };
+    Ok(number.saturating_mul(multiplier))
 }
 pub fn save(path: &Path, index: &InventoryIndex) -> Result<(), CoreError> {
     if let Some(parent) = path.parent() {
@@ -71,5 +101,6 @@ mod tests {
         fs::write(&p,"bucket,key,version,size,last,etag,islatest,delete,storage,sc,owner,acl\nb,\"k,test.log\",,12,now,,,,STANDARD,,,\n").unwrap();
         let index = import_csv(&p).unwrap();
         assert_eq!(search(&index, "k,test").len(), 1);
+        assert_eq!(search(&index, "size>10B").len(), 1);
     }
 }
