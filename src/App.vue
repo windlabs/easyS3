@@ -1013,8 +1013,9 @@ async function removeBucket() {
           <option value="DEEP_ARCHIVE">DEEP_ARCHIVE</option>
         </select>
        </label>
-       <label class="upload-storage">服务端加密<select v-model="uploadEncryption" class="select"><option value="none">不加密</option><option value="sse-s3">SSE-S3（AES-256）</option><option value="sse-kms">SSE-KMS</option></select></label>
+       <label class="upload-storage">服务端加密<select v-model="uploadEncryption" class="select"><option value="none">不加密</option><option value="sse-s3">SSE-S3（AES-256）</option><option value="sse-kms">SSE-KMS</option><option value="sse-c">SSE-C（会话密钥）</option></select></label>
        <input v-if="uploadEncryption === 'sse-kms'" v-model="uploadKmsKeyId" class="input" placeholder="KMS Key ID（可选）" />
+       <input v-if="uploadEncryption === 'sse-c'" v-model="uploadKmsKeyId" class="input" type="password" placeholder="Base64 编码的 32 字节 SSE-C 密钥（不会保存）" />
     </ConfirmDialog>
 
     <ConfirmDialog

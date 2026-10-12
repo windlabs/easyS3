@@ -15,6 +15,7 @@ use easys3_core::preview::PreviewData;
 use easys3_core::resume::{ResumePart, ResumeTask, ResumeUploadFile};
 use easys3_core::settings::{save_settings, TransferSettings};
 use easys3_core::sync::SyncPlan;
+use md5::Md5;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -280,7 +281,10 @@ pub async fn cost_by_service(state: State<'_, App>) -> Result<Vec<CostGroup>, St
         .end(end.to_string())
         .build()
         .map_err(|e| format!("构建成本查询失败：{e}"))?;
-    let group = GroupDefinition::builder().r#type(GroupDefinitionType::Dimension).key("SERVICE").build();
+    let group = GroupDefinition::builder()
+        .r#type(GroupDefinitionType::Dimension)
+        .key("SERVICE")
+        .build();
     let result = client
         .get_cost_and_usage()
         .time_period(interval)
@@ -2020,6 +2024,19 @@ pub fn start_upload(
         "sse-kms" => Some(easys3_core::upload::ServerEncryption::Kms {
             key_id: kms_key_id.filter(|value| !value.trim().is_empty()),
         }),
+        "sse-c" => {
+            let key = kms_key_id.ok_or("SSE-C 需要输入 Base64 编码的 256-bit 客户端密钥")?;
+            let raw = STANDARD
+                .decode(&key)
+                .map_err(|_| "SSE-C 密钥必须是 Base64".to_string())?;
+            if raw.len() != 32 {
+                return Err("SSE-C 密钥解码后必须为 32 字节".to_string());
+            }
+            Some(easys3_core::upload::ServerEncryption::Customer {
+                key_base64: key,
+                key_md5_base64: STANDARD.encode(Md5::digest(raw)),
+            })
+        }
         _ => return Err("不支持的服务端加密类型".to_string()),
     };
     let settings = state.transfer_settings();
@@ -2162,6 +2179,19 @@ pub async fn start_upload_plan(
         "sse-kms" => Some(easys3_core::upload::ServerEncryption::Kms {
             key_id: kms_key_id.filter(|value| !value.trim().is_empty()),
         }),
+        "sse-c" => {
+            let key = kms_key_id.ok_or("SSE-C 需要输入 Base64 编码的 256-bit 客户端密钥")?;
+            let raw = STANDARD
+                .decode(&key)
+                .map_err(|_| "SSE-C 密钥必须是 Base64".to_string())?;
+            if raw.len() != 32 {
+                return Err("SSE-C 密钥解码后必须为 32 字节".to_string());
+            }
+            Some(easys3_core::upload::ServerEncryption::Customer {
+                key_base64: key,
+                key_md5_base64: STANDARD.encode(Md5::digest(raw)),
+            })
+        }
         _ => return Err("不支持的服务端加密类型".to_string()),
     };
     tasks::spawn_upload(

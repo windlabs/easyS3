@@ -1727,6 +1727,7 @@ dependencies = [
  "easys3-core",
  "image",
  "keyring",
+ "md-5 0.10.6",
  "rand 0.8.8",
  "serde",
  "serde_json",

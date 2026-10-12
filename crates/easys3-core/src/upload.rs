@@ -47,7 +47,13 @@ pub struct UploadOptions {
 #[derive(Clone, Debug)]
 pub enum ServerEncryption {
     S3,
-    Kms { key_id: Option<String> },
+    Kms {
+        key_id: Option<String>,
+    },
+    Customer {
+        key_base64: String,
+        key_md5_base64: String,
+    },
 }
 
 /// multipart 上传的可持久化检查点。调用方负责将它写入应用配置目录。
@@ -143,6 +149,13 @@ pub async fn upload_file_resumable(
                         None => request,
                     }
                 }
+                ServerEncryption::Customer {
+                    key_base64,
+                    key_md5_base64,
+                } => request
+                    .sse_customer_algorithm("AES256")
+                    .sse_customer_key(key_base64)
+                    .sse_customer_key_md5(key_md5_base64),
             };
         }
         request.send().await.map_err(|e| classify(&e))?;
@@ -262,6 +275,13 @@ async fn upload_multipart(
                             None => request,
                         }
                     }
+                    ServerEncryption::Customer {
+                        key_base64,
+                        key_md5_base64,
+                    } => request
+                        .sse_customer_algorithm("AES256")
+                        .sse_customer_key(key_base64)
+                        .sse_customer_key_md5(key_md5_base64),
                 };
             }
             let response = request.send().await.map_err(|e| classify(&e))?;
