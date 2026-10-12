@@ -101,10 +101,21 @@ pub fn get_state(state: State<App>) -> StateDto {
     }
 }
 #[tauri::command]
-pub async fn test_assume_role(state: State<'_, App>, role_arn: String, external_id: Option<String>) -> Result<(), String> {
+pub async fn test_assume_role(
+    state: State<'_, App>,
+    role_arn: String,
+    external_id: Option<String>,
+) -> Result<(), String> {
     let connection = state.current_connection()?;
-    let client = easys3_core::s3::assume_role_client(&connection, &role_arn, external_id.as_deref()).await.map_err(|e| e.to_string())?;
-    client.list_buckets().send().await.map_err(|e| format!("临时凭据验证失败：{e}"))?;
+    let client =
+        easys3_core::s3::assume_role_client(&connection, &role_arn, external_id.as_deref())
+            .await
+            .map_err(|e| e.to_string())?;
+    client
+        .list_buckets()
+        .send()
+        .await
+        .map_err(|e| format!("临时凭据验证失败：{e}"))?;
     Ok(())
 }
 
@@ -329,6 +340,8 @@ pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
                 force_path_style: false,
                 read_only: false,
                 default_bucket: None,
+                role_arn: None,
+                external_id: None,
                 ca_cert_path: None,
                 last_test: None,
             })

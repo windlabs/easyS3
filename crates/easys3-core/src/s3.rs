@@ -173,6 +173,8 @@ mod tests {
             force_path_style: true,
             read_only: false,
             default_bucket: None,
+            role_arn: None,
+            external_id: None,
             ca_cert_path: None,
             last_test: None,
         }

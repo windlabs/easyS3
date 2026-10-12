@@ -60,6 +60,8 @@ function toPayload(): ConnectionConfig {
     access_key: form.access_key.trim(),
     secret_key: form.secret_key.trim(),
     default_bucket: form.default_bucket?.trim() || null,
+    role_arn: form.role_arn?.trim() || null,
+    external_id: form.external_id?.trim() || null,
     ca_cert_path: form.ca_cert_path?.trim() || null,
     last_test: form.last_test ?? null,
   };
@@ -85,6 +87,14 @@ async function testConnection() {
   } finally {
     testing.value = false;
   }
+}
+async function testAssumeRole() {
+  const roleArn = form.role_arn?.trim();
+  if (!roleArn) { testOk.value = false; testMsg.value = "请先填写 Role ARN"; return; }
+  testing.value = true; testMsg.value = "";
+  try { await api.testAssumeRole(roleArn, form.external_id?.trim() || null); testOk.value = true; testMsg.value = "AssumeRole 临时凭据验证成功"; }
+  catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
+  finally { testing.value = false; }
 }
 
 async function save() {
@@ -208,6 +218,8 @@ const { onMousedown, onClick } = useMaskClose(close);
             服务使用自签名 HTTPS 证书时填写其 CA 证书（PEM）文件路径；留空使用系统证书。
           </div>
         </div>
+        <div class="form-row"><label>Role ARN（可选）</label><input v-model="form.role_arn" class="input" placeholder="arn:aws:iam::123456789012:role/RoleName" /></div>
+        <div class="form-row"><label>External ID（可选）</label><input v-model="form.external_id" class="input" placeholder="第三方信任策略要求时填写" /></div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>
       <div class="modal-foot">
@@ -223,6 +235,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         <button class="btn" :disabled="testing" @click="testConnection">
           {{ testing ? "测试中…" : "测试连接" }}
         </button>
+        <button v-if="form.role_arn" class="btn" :disabled="testing" @click="testAssumeRole">验证 AssumeRole</button>
         <button class="btn" @click="close">取消</button>
         <button class="btn primary" :disabled="saving" @click="save">
           {{ saving ? "保存中…" : "保存" }}
