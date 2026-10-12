@@ -15,6 +15,8 @@ export interface ConnectionConfig {
   role_arn?: string | null;
   external_id?: string | null;
   recycle_prefix?: string | null;
+  sso_start_url?: string | null;
+  sso_region?: string | null;
   /** 可选；服务用自签证书时指定 CA 证书（PEM 编码）文件路径 */
   ca_cert_path?: string | null;
   /** 最近一次「测试连接」结果（后端随配置持久化；连接字段变更后由后端清空） */
@@ -175,6 +177,8 @@ export function blankConnection(): ConnectionConfig {
     role_arn: null,
     external_id: null,
     recycle_prefix: null,
+    sso_start_url: null,
+    sso_region: null,
     ca_cert_path: null,
     last_test: null,
   };

@@ -31,6 +31,13 @@ pub struct StateDto {
     pub connections: Vec<ConnectionConfig>,
     pub current_connection_id: Option<String>,
 }
+#[derive(Serialize)]
+pub struct SsoDeviceCode {
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub user_code: String,
+    pub expires_in: i32,
+}
 
 /// P1-01：应用重启后由 `transfers.json` 恢复的任务摘要，不含本地路径和凭据。
 #[derive(Serialize)]
@@ -118,6 +125,41 @@ pub async fn test_assume_role(
         .await
         .map_err(|e| format!("临时凭据验证失败：{e}"))?;
     Ok(())
+}
+#[tauri::command]
+pub async fn start_sso_device_authorization(
+    start_url: String,
+    region: String,
+) -> Result<SsoDeviceCode, String> {
+    if !start_url.starts_with("https://") {
+        return Err("SSO Start URL 必须是 https 地址".to_string());
+    }
+    let config = aws_sdk_ssooidc::config::Builder::new()
+        .region(aws_sdk_ssooidc::config::Region::new(region))
+        .build();
+    let client = aws_sdk_ssooidc::Client::from_conf(config);
+    let registration = client
+        .register_client()
+        .client_name("easyS3")
+        .client_type("public")
+        .scopes("sso:account:access")
+        .send()
+        .await
+        .map_err(|e| format!("注册 SSO 客户端失败：{e}"))?;
+    let output = client
+        .start_device_authorization()
+        .client_id(registration.client_id().unwrap_or_default())
+        .client_secret(registration.client_secret().unwrap_or_default())
+        .start_url(&start_url)
+        .send()
+        .await
+        .map_err(|e| format!("启动 SSO 设备授权失败：{e}"))?;
+    Ok(SsoDeviceCode {
+        verification_uri: output.verification_uri().unwrap_or_default().to_owned(),
+        verification_uri_complete: output.verification_uri_complete().map(ToOwned::to_owned),
+        user_code: output.user_code().unwrap_or_default().to_owned(),
+        expires_in: output.expires_in(),
+    })
 }
 
 /// 激活当前连接的 AssumeRole 临时 Client。Client 仅驻留进程内，连接配置保存时自动失效；
@@ -538,6 +580,8 @@ pub fn import_aws_profiles() -> Result<Vec<ConnectionConfig>, String> {
                 role_arn: None,
                 external_id: None,
                 recycle_prefix: None,
+                sso_start_url: None,
+                sso_region: None,
                 ca_cert_path: None,
                 last_test: None,
             })

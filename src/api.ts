@@ -25,6 +25,7 @@ import type {
 
 export const getState = () => invoke<StateDto>("get_state");
 export const testAssumeRole = (roleArn: string, externalId: string | null) => invoke<void>("test_assume_role", { role_arn: roleArn, external_id: externalId });
+export const startSsoDeviceAuthorization = (startUrl: string, region: string) => invoke<{ verification_uri: string; verification_uri_complete: string | null; user_code: string; expires_in: number }>("start_sso_device_authorization", { start_url: startUrl, region });
 export const activateAssumeRole = () => invoke<void>("activate_assume_role");
 export const assumeRoleExpiry = () => invoke<number | null>("assume_role_expiry");
 export const getAudit = (connection: string | null, since: number | null) => invoke<import("./types").AuditEntry[]>("get_audit", { connection, since });

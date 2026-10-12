@@ -16,6 +16,7 @@ uuid = { version = "1", features = ["v4"] }
 aws-sdk-s3 = "1"
 aws-sdk-sts = "1"
 aws-sdk-costexplorer = "1"
+aws-sdk-ssooidc = "1"
 keyring = "3"
 aes-gcm = "0.10"
 rand = "0.8"

@@ -192,6 +192,8 @@ mod tests {
             role_arn: None,
             external_id: None,
             recycle_prefix: None,
+            sso_start_url: None,
+            sso_region: None,
             ca_cert_path: None,
             last_test: None,
         }

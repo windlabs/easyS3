@@ -47,6 +47,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
             commands::test_assume_role,
+            commands::start_sso_device_authorization,
             commands::activate_assume_role,
             commands::assume_role_expiry,
             commands::get_audit,

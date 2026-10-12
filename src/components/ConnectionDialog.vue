@@ -31,6 +31,7 @@ const saving = ref(false);
 const saveError = ref("");
 const confirmDelete = ref(false);
 const assumeRoleExpiry = ref<number | null>(null);
+const ssoDevice = ref<{ verification_uri: string; verification_uri_complete: string | null; user_code: string; expires_in: number } | null>(null);
 
 watch(
   () => props.modelValue,
@@ -50,6 +51,7 @@ watch(
     saveError.value = "";
     confirmDelete.value = false;
     assumeRoleExpiry.value = null;
+    ssoDevice.value = null;
     if (form.role_arn) void api.assumeRoleExpiry().then((value) => { assumeRoleExpiry.value = value; }).catch(() => {});
   },
 );
@@ -66,6 +68,8 @@ function toPayload(): ConnectionConfig {
     role_arn: form.role_arn?.trim() || null,
     external_id: form.external_id?.trim() || null,
     recycle_prefix: form.recycle_prefix?.trim() || null,
+    sso_start_url: form.sso_start_url?.trim() || null,
+    sso_region: form.sso_region?.trim() || null,
     ca_cert_path: form.ca_cert_path?.trim() || null,
     last_test: form.last_test ?? null,
   };
@@ -103,6 +107,14 @@ async function testAssumeRole() {
 async function activateAssumeRole() {
   testing.value = true; testMsg.value = "";
   try { await api.saveConnection(toPayload()); await api.activateAssumeRole(); assumeRoleExpiry.value = await api.assumeRoleExpiry(); testOk.value = true; testMsg.value = "AssumeRole 已激活，当前会话将使用临时凭据"; emit("saved"); }
+  catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
+  finally { testing.value = false; }
+}
+async function startSsoAuthorization() {
+  const url = form.sso_start_url?.trim(); const region = form.sso_region?.trim();
+  if (!url || !region) { testOk.value = false; testMsg.value = "请填写 SSO Start URL 与 SSO Region"; return; }
+  testing.value = true; testMsg.value = "";
+  try { ssoDevice.value = await api.startSsoDeviceAuthorization(url, region); testOk.value = true; testMsg.value = "请在浏览器完成授权；设备码已显示"; }
   catch (e) { testOk.value = false; testMsg.value = errorMessage(e); }
   finally { testing.value = false; }
 }
@@ -232,6 +244,9 @@ const { onMousedown, onClick } = useMaskClose(close);
         <div class="form-row"><label>External ID（可选）</label><input v-model="form.external_id" class="input" placeholder="第三方信任策略要求时填写" /></div>
         <div v-if="form.role_arn && assumeRoleExpiry" class="form-hint">临时凭据到期：{{ formatTime(new Date(assumeRoleExpiry * 1000).toISOString()) }}<span v-if="assumeRoleExpiry * 1000 <= Date.now()">（已过期，请重新激活）</span></div>
         <div class="form-row"><label>回收站前缀（可选）</label><input v-model="form.recycle_prefix" class="input" placeholder="例如 .easys3-trash/；启用后删除先移入此处" /></div>
+        <div class="form-row"><label>SSO Start URL（可选）</label><input v-model="form.sso_start_url" class="input" placeholder="https://your-sso-portal.awsapps.com/start" /></div>
+        <div class="form-row"><label>SSO Region（可选）</label><input v-model="form.sso_region" class="input" placeholder="例如 us-east-1" /></div>
+        <div v-if="ssoDevice" class="form-hint">请访问：{{ ssoDevice.verification_uri_complete || ssoDevice.verification_uri }}<br />设备码：<b>{{ ssoDevice.user_code }}</b>（{{ ssoDevice.expires_in }} 秒内有效）</div>
         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>
       <div class="modal-foot">
@@ -249,6 +264,7 @@ const { onMousedown, onClick } = useMaskClose(close);
         </button>
         <button v-if="form.role_arn" class="btn" :disabled="testing" @click="testAssumeRole">验证 AssumeRole</button>
         <button v-if="form.role_arn" class="btn" :disabled="testing" @click="activateAssumeRole">激活临时凭据</button>
+        <button v-if="form.sso_start_url" class="btn" :disabled="testing" @click="startSsoAuthorization">开始 SSO 授权</button>
         <button class="btn" @click="close">取消</button>
         <button class="btn primary" :disabled="saving" @click="save">
           {{ saving ? "保存中…" : "保存" }}

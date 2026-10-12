@@ -497,6 +497,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-ssooidc"
+version = "1.115.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84edc7495d56e006dff0031cbc9782784902456f7024651c2da902a3d2336262"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-sts"
 version = "1.118.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1742,6 +1767,7 @@ dependencies = [
  "arboard",
  "aws-sdk-costexplorer",
  "aws-sdk-s3",
+ "aws-sdk-ssooidc",
  "aws-sdk-sts",
  "base64 0.22.1",
  "chrono",

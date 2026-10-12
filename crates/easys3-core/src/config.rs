@@ -40,6 +40,10 @@ pub struct ConnectionConfig {
     pub external_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recycle_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_start_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_region: Option<String>,
     /// 可选；服务使用自签证书时指定 CA 证书（PEM 编码）文件路径
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_cert_path: Option<String>,
@@ -210,6 +214,8 @@ pub fn connection_fields_changed(old: &ConnectionConfig, new: &ConnectionConfig)
         || old.role_arn != new.role_arn
         || old.external_id != new.external_id
         || old.recycle_prefix != new.recycle_prefix
+        || old.sso_start_url != new.sso_start_url
+        || old.sso_region != new.sso_region
         || old.force_path_style != new.force_path_style
         || old.ca_cert_path != new.ca_cert_path
 }
@@ -249,6 +255,8 @@ mod tests {
             role_arn: None,
             external_id: None,
             recycle_prefix: None,
+            sso_start_url: None,
+            sso_region: None,
             ca_cert_path: None,
             last_test: None,
         }
