@@ -115,6 +115,16 @@ easyS3 想把「查看桶里有什么、把文件拖进去、把产物拉下来�
 | macOS | Gatekeeper「无法验证开发者」或「已损坏，无法打开」 | 右键应用 →「打开」；或执行 `xattr -cr /Applications/easyS3.app` |
 | Linux | AppImage 无执行权限 | `chmod +x easyS3_*.AppImage` |
 
+### Windows 启动排障
+
+如果双击安装后的 `easyS3.exe` 没有窗口且进程立即退出，请先安装或修复 Microsoft Edge WebView2 Runtime（Evergreen x64）：
+
+```powershell
+winget install Microsoft.EdgeWebView2Runtime
+```
+
+当前版本在启动异常时会弹出错误提示，并将诊断信息写入 `%TEMP%\\easyS3-startup.log`。如果仍无法启动，请将该日志与 Windows 版本、WebView2 Runtime 版本一并反馈。
+
 建议下载后使用 Releases 附带的 `SHA256SUMS.txt` 校验完整性（Windows 可用 `certutil -hashfile <文件名> SHA256`）：
 
 ```bash

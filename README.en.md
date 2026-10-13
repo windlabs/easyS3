@@ -115,6 +115,16 @@ Release packages are currently **not code-signed**, so a security warning on fir
 | macOS | Gatekeeper: "cannot verify the developer" or "damaged and can't be opened" | Right-click the app → "Open"; or run `xattr -cr /Applications/easyS3.app` |
 | Linux | AppImage has no execute permission | `chmod +x easyS3_*.AppImage` |
 
+### Windows startup troubleshooting
+
+If double-clicking the installed `easyS3.exe` shows no window and the process exits immediately, install or repair the Microsoft Edge WebView2 Runtime (Evergreen x64):
+
+```powershell
+winget install Microsoft.EdgeWebView2Runtime
+```
+
+The current build shows a startup error dialog and writes diagnostics to `%TEMP%\\easyS3-startup.log`. If the problem persists, include that log together with the Windows and WebView2 Runtime versions when reporting the issue.
+
 Verify downloads against the `SHA256SUMS.txt` attached to each release (on Windows: `certutil -hashfile <file> SHA256`):
 
 ```bash
