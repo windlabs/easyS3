@@ -140,6 +140,7 @@ pub fn spawn_sync_download(
     shared: Arc<TaskShared>,
     settings: TransferSettings,
     throttle: Arc<Throttle>,
+    sse: Option<easys3_core::download::SseCustomerKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -156,6 +157,7 @@ pub fn spawn_sync_download(
                 settings.auto_retry_count as usize,
                 &throttle,
                 true,
+                sse.as_ref(),
             )
             .await;
         });
@@ -347,6 +349,7 @@ pub fn spawn_zip(
     cancel: Arc<AtomicBool>,
     shared: Arc<TaskShared>,
     throttle: Arc<Throttle>,
+    sse: Option<easys3_core::download::SseCustomerKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -406,6 +409,7 @@ pub fn spawn_zip(
                     progress,
                     cancel.clone(),
                     Some(throttle.clone()),
+                    sse.as_ref(),
                 )
                 .await
                 {
@@ -523,7 +527,7 @@ pub struct TaskEntry {
 }
 
 type CheckpointSink = Arc<dyn Fn(&str, MultipartCheckpoint) + Send + Sync>;
-type CompletionSink = Arc<dyn Fn() + Send + Sync>;
+pub type CompletionSink = Arc<dyn Fn() + Send + Sync>;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -891,6 +895,7 @@ pub fn spawn_download_expand(
     throttle: Arc<Throttle>,
     resumable: bool,
     completed: Option<CompletionSink>,
+    sse: Option<easys3_core::download::SseCustomerKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -958,6 +963,7 @@ pub fn spawn_download_expand(
                     settings.auto_retry_count as usize,
                     &throttle,
                     resumable,
+                    sse.as_ref(),
                 )
                 .await;
                 if matches!(lock(&shared.info).status, TaskStatus::Done) {
@@ -989,6 +995,7 @@ async fn run_download_jobs(
     auto_retries: usize,
     throttle: &Arc<Throttle>,
     resumable: bool,
+    sse: Option<&easys3_core::download::SseCustomerKey>,
 ) {
     for job in jobs {
         if cancel.load(Ordering::Relaxed) {
@@ -1020,6 +1027,7 @@ async fn run_download_jobs(
                     cancel.clone(),
                     Some(throttle.clone()),
                     true,
+                    sse,
                 )
                 .await
             } else {
@@ -1031,6 +1039,7 @@ async fn run_download_jobs(
                     progress.clone(),
                     cancel.clone(),
                     Some(throttle.clone()),
+                    sse,
                 )
                 .await
             };
@@ -1046,8 +1055,10 @@ async fn run_download_jobs(
         }
         match result {
             Ok(()) => {
-                match easys3_core::download::verify_download_etag(client, bucket, &job.key, &dest)
-                    .await
+                match easys3_core::download::verify_download_etag(
+                    client, bucket, &job.key, &dest, sse,
+                )
+                .await
                 {
                     Ok(()) => lock(&shared.info).files_done += 1,
                     Err(error) => record_failure(shared, &job.key, error.to_string()),
@@ -1339,6 +1350,7 @@ pub fn spawn_open(
     shared: Arc<TaskShared>,
     auto_retries: usize,
     throttle: Arc<Throttle>,
+    sse: Option<easys3_core::download::SseCustomerKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -1359,6 +1371,7 @@ pub fn spawn_open(
                     progress.clone(),
                     cancel.clone(),
                     Some(throttle.clone()),
+                    sse.as_ref(),
                 )
                 .await;
                 if result.is_ok()

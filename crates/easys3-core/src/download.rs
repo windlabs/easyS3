@@ -4,6 +4,7 @@
 use crate::error::{classify, CoreError};
 use crate::throttle::Throttle;
 use aws_sdk_s3::Client;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use md5::{Digest, Md5};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +12,28 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::upload::ProgressFn;
+
+/// SSE-C 会话材料。调用方只可在进程内保存，严禁写进任务恢复记录或配置。
+#[derive(Clone, Debug)]
+pub struct SseCustomerKey {
+    pub key_base64: String,
+    pub key_md5_base64: String,
+}
+
+pub fn sse_customer_key(key_base64: String) -> Result<SseCustomerKey, CoreError> {
+    let raw = STANDARD
+        .decode(&key_base64)
+        .map_err(|_| CoreError::Other("SSE-C 密钥必须是 Base64".into()))?;
+    if raw.len() != 32 {
+        return Err(CoreError::Other("SSE-C 密钥解码后必须为 32 字节".into()));
+    }
+    let mut digest = Md5::new();
+    digest.update(raw);
+    Ok(SseCustomerKey {
+        key_base64,
+        key_md5_base64: STANDARD.encode(digest.finalize()),
+    })
+}
 
 /// 下载单个对象到 dest。自动创建父目录（文件夹下载保留目录结构）。
 /// throttle = 全局下载限速（None / rate 0 = 不限速）。
@@ -23,10 +46,12 @@ pub async fn download_object(
     progress: ProgressFn,
     cancel: Arc<AtomicBool>,
     throttle: Option<Arc<Throttle>>,
+    sse: Option<&SseCustomerKey>,
 ) -> Result<(), CoreError> {
-    let result =
-        download_object_resumable(client, bucket, key, dest, progress, cancel, throttle, false)
-            .await;
+    let result = download_object_resumable(
+        client, bucket, key, dest, progress, cancel, throttle, false, sse,
+    )
+    .await;
     if result.is_err() {
         let _ = tokio::fs::remove_file(partial_path(dest)).await;
     }
@@ -39,14 +64,20 @@ pub async fn verify_download_etag(
     bucket: &str,
     key: &str,
     dest: &Path,
+    sse: Option<&SseCustomerKey>,
 ) -> Result<(), CoreError> {
-    let head = client
-        .head_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await
-        .map_err(|e| classify(&e))?;
+    let request = client.head_object().bucket(bucket).key(key);
+    let head = if let Some(sse) = sse {
+        request
+            .sse_customer_algorithm("AES256")
+            .sse_customer_key(&sse.key_base64)
+            .sse_customer_key_md5(&sse.key_md5_base64)
+            .send()
+            .await
+    } else {
+        request.send().await
+    }
+    .map_err(|e| classify(&e))?;
     let Some(etag) = head.e_tag().map(|value| value.trim_matches('"')) else {
         return Ok(());
     };
@@ -89,6 +120,7 @@ pub async fn download_object_resumable(
     cancel: Arc<AtomicBool>,
     throttle: Option<Arc<Throttle>>,
     resume: bool,
+    sse: Option<&SseCustomerKey>,
 ) -> Result<(), CoreError> {
     if let Some(dir) = dest.parent() {
         if !dir.as_os_str().is_empty() {
@@ -112,7 +144,17 @@ pub async fn download_object_resumable(
         if offset > 0 {
             request = request.range(format!("bytes={offset}-"));
         }
-        let out = request.send().await.map_err(|e| classify(&e))?;
+        let out = if let Some(sse) = sse {
+            request
+                .sse_customer_algorithm("AES256")
+                .sse_customer_key(&sse.key_base64)
+                .sse_customer_key_md5(&sse.key_md5_base64)
+                .send()
+                .await
+        } else {
+            request.send().await
+        }
+        .map_err(|e| classify(&e))?;
         // 部分 S3 兼容服务会忽略 Range 并返回完整对象；此时不能 append，否则会得到
         // 损坏文件。删除临时文件后以普通请求重新开始。
         if offset > 0 && out.content_range().is_none() {

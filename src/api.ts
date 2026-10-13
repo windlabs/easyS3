@@ -36,6 +36,9 @@ export const assumeRoleExpiry = () => invoke<number | null>("assume_role_expiry"
 export const getAudit = (connection: string | null, since: number | null) => invoke<import("./types").AuditEntry[]>("get_audit", { connection, since });
 export const exportAudit = (path: string, connection: string | null, since: number | null) => invoke<void>("export_audit", { path, connection, since });
 export const recordAudit = (bucket: string, action: string, status: string, detail: string) => invoke<void>("record_audit", { bucket, action, status, detail });
+export const setSseCustomerKey = (key: string) => invoke<void>("set_sse_customer_key", { key });
+export const clearSseCustomerKey = () => invoke<void>("clear_sse_customer_key");
+export const hasSseCustomerKey = () => invoke<boolean>("has_sse_customer_key");
 export const costOverview = () => invoke<{ date: string; amount: string; unit: string }[]>("cost_overview");
 export const costByService = () => invoke<{ service: string; amount: string; unit: string }[]>("cost_by_service");
 export const costByUsageType = () => invoke<{ service: string; amount: string; unit: string }[]>("cost_by_usage_type");

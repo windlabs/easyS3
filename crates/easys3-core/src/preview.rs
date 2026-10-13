@@ -2,6 +2,7 @@
 //! HTML 不渲染（防 XSS）；PDF / 音视频以 data URL 交由前端内嵌展示，不经临时文件。
 //! 规格：`.agents/s3-operations.md`「5. 对象预览」。
 
+use crate::download::SseCustomerKey;
 use crate::error::{classify, CoreError};
 use aws_sdk_s3::Client;
 use base64::Engine;
@@ -73,6 +74,16 @@ pub async fn preview_object(
     key: &str,
     media_limit_bytes: i64,
 ) -> Result<PreviewData, CoreError> {
+    preview_object_with_sse(client, bucket, key, media_limit_bytes, None).await
+}
+
+pub async fn preview_object_with_sse(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    media_limit_bytes: i64,
+    sse: Option<&SseCustomerKey>,
+) -> Result<PreviewData, CoreError> {
     let ext = ext_of(key);
     if ext == "svg" {
         return Err(CoreError::Other(
@@ -81,13 +92,18 @@ pub async fn preview_object(
     }
 
     // 先 Head 拿大小，超限直接拒绝，避免无谓下载
-    let head = client
-        .head_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await
-        .map_err(|e| classify(&e))?;
+    let head_request = client.head_object().bucket(bucket).key(key);
+    let head = if let Some(sse) = sse {
+        head_request
+            .sse_customer_algorithm("AES256")
+            .sse_customer_key(&sse.key_base64)
+            .sse_customer_key_md5(&sse.key_md5_base64)
+            .send()
+            .await
+    } else {
+        head_request.send().await
+    }
+    .map_err(|e| classify(&e))?;
     let len = head.content_length().unwrap_or(0);
 
     let is_image = IMAGE_EXTS.contains(&ext.as_str());
@@ -105,13 +121,18 @@ pub async fn preview_object(
         return Err(CoreError::Other("文本超过 1MB，请下载后查看".to_string()));
     }
 
-    let out = client
-        .get_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await
-        .map_err(|e| classify(&e))?;
+    let get_request = client.get_object().bucket(bucket).key(key);
+    let out = if let Some(sse) = sse {
+        get_request
+            .sse_customer_algorithm("AES256")
+            .sse_customer_key(&sse.key_base64)
+            .sse_customer_key_md5(&sse.key_md5_base64)
+            .send()
+            .await
+    } else {
+        get_request.send().await
+    }
+    .map_err(|e| classify(&e))?;
     let mut bytes = Vec::new();
     out.body
         .into_async_read()

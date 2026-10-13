@@ -41,6 +41,8 @@ pub struct App {
     pub pending_sso: Mutex<HashMap<String, PendingSsoAuthorization>>,
     /// P2-04 SSO access token 到期时间；token 本身在 SecretStore 加密保存。
     pub sso_token_expiry: Mutex<HashMap<String, u64>>,
+    /// SSE-C 会话密钥，仅内存；不落盘、不进入任务历史。
+    pub sse_customer_keys: Mutex<HashMap<String, easys3_core::download::SseCustomerKey>>,
     /// 传输设置快照（保存设置时更新；任务启动时读取快照）
     pub settings: Mutex<TransferSettings>,
     /// 全局上传限速（跨任务共享，保存设置热调整）
@@ -113,6 +115,7 @@ impl App {
             assumed_role_expiry: Mutex::new(HashMap::new()),
             pending_sso: Mutex::new(HashMap::new()),
             sso_token_expiry: Mutex::new(HashMap::new()),
+            sse_customer_keys: Mutex::new(HashMap::new()),
             settings: Mutex::new(settings),
             upload_throttle,
             download_throttle,

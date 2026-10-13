@@ -55,6 +55,13 @@ fn transfer_cipher(password: &str, salt: &[u8]) -> Aes256Gcm {
     Aes256Gcm::new_from_slice(&hash.finalize()).expect("SHA-256 key length")
 }
 
+fn current_sse_customer_key(
+    state: &App,
+) -> Result<Option<easys3_core::download::SseCustomerKey>, String> {
+    let id = state.current_connection()?.id;
+    Ok(lock(&state.sse_customer_keys).get(&id).cloned())
+}
+
 fn encrypt_export(text: &str, password: &str) -> Result<String, String> {
     let mut salt = [0u8; 16];
     let mut nonce = [0u8; 12];
@@ -465,6 +472,24 @@ pub fn record_audit(
     let connection = state.current_connection()?.name;
     state.record_audit(connection, bucket, action, status, detail);
     Ok(())
+}
+#[tauri::command]
+pub fn set_sse_customer_key(state: State<App>, key: String) -> Result<(), String> {
+    let key = easys3_core::download::sse_customer_key(key).map_err(|e| e.to_string())?;
+    let id = state.current_connection()?.id;
+    lock(&state.sse_customer_keys).insert(id, key);
+    Ok(())
+}
+#[tauri::command]
+pub fn clear_sse_customer_key(state: State<App>) -> Result<(), String> {
+    let id = state.current_connection()?.id;
+    lock(&state.sse_customer_keys).remove(&id);
+    Ok(())
+}
+#[tauri::command]
+pub fn has_sse_customer_key(state: State<App>) -> Result<bool, String> {
+    let id = state.current_connection()?.id;
+    Ok(lock(&state.sse_customer_keys).contains_key(&id))
 }
 #[derive(Serialize)]
 pub struct CostPoint {
@@ -1037,6 +1062,7 @@ pub fn resume_task(state: State<App>, app: tauri::AppHandle, id: String) -> Resu
                 state.download_throttle.clone(),
                 true,
                 Some(completed),
+                None, // 密钥绝不进入恢复记录；重启后需重新设置会话密钥。
             );
             let _ = created_at;
         }
@@ -1773,6 +1799,7 @@ pub fn start_sync_download(
         shared,
         state.transfer_settings(),
         state.download_throttle.clone(),
+        current_sse_customer_key(&state)?,
     );
     let mut ids = vec![id];
     if !plan.delete.is_empty() {
@@ -1821,6 +1848,7 @@ pub fn start_zip_download(
         cancel,
         shared,
         state.download_throttle.clone(),
+        current_sse_customer_key(&state)?,
     );
     Ok(id)
 }
@@ -1867,7 +1895,8 @@ pub async fn preview_object(
 ) -> Result<PreviewData, String> {
     let (client, _) = state.current_control_client()?;
     let media_limit = state.transfer_settings().preview_limit_bytes();
-    easys3_core::preview::preview_object(&client, &bucket, &key, media_limit)
+    let sse = current_sse_customer_key(&state)?;
+    easys3_core::preview::preview_object_with_sse(&client, &bucket, &key, media_limit, sse.as_ref())
         .await
         .map_err(|e| e.to_string())
 }
@@ -1990,6 +2019,7 @@ pub fn open_object(
         shared,
         settings.auto_retry_count as usize,
         state.download_throttle.clone(),
+        current_sse_customer_key(&state)?,
     );
     Ok(id)
 }
@@ -2462,13 +2492,15 @@ pub fn start_upload(
     let resume = state.resume.clone();
     let resume_path = state.resume_path.clone();
     let task_id = id.clone();
-    let checkpoints =
-        Arc::new(
-            move |key: &str, checkpoint: easys3_core::upload::MultipartCheckpoint| {
-                {
-                    let mut file = lock(&resume);
-                    if let Some(ResumeTask::Upload { files, .. }) = file.tasks.iter_mut().find(
-                        |task| matches!(task, ResumeTask::Upload { id, .. } if id == &task_id),
+    let checkpoint_resume = resume.clone();
+    let checkpoint_resume_path = resume_path.clone();
+    let checkpoint_task_id = task_id.clone();
+    let checkpoints = Arc::new(
+        move |key: &str, checkpoint: easys3_core::upload::MultipartCheckpoint| {
+            {
+                let mut file = lock(&checkpoint_resume);
+                if let Some(ResumeTask::Upload { files, .. }) = file.tasks.iter_mut().find(
+                        |task| matches!(task, ResumeTask::Upload { id, .. } if id == &checkpoint_task_id),
                     ) {
                         if let Some(item) = files.iter_mut().find(|item| item.key == key) {
                             item.upload_id = checkpoint.upload_id;
@@ -2480,13 +2512,10 @@ pub fn start_upload(
                                 .collect();
                         }
                     }
-                }
-                save_resume_snapshot(&resume_path, &resume);
-            },
-        );
-    let resume = state.resume.clone();
-    let resume_path = state.resume_path.clone();
-    let task_id = id.clone();
+            }
+            save_resume_snapshot(&checkpoint_resume_path, &checkpoint_resume);
+        },
+    );
     let completed = Arc::new(move || remove_resume_task(&resume_path, &resume, &task_id));
     tasks::spawn_upload(
         app,
@@ -2631,6 +2660,7 @@ pub fn start_download(
         0,
     ));
     let retry = Arc::new(Mutex::new(None));
+    let sse = current_sse_customer_key(&state)?;
     {
         let mut inner = lock(&state.inner);
         inner.tasks.insert(
@@ -2642,7 +2672,7 @@ pub fn start_download(
             },
         );
     }
-    {
+    if sse.is_none() {
         let mut resume = lock(&state.resume);
         resume.tasks.push(ResumeTask::Download {
             id: id.clone(),
@@ -2661,10 +2691,17 @@ pub fn start_download(
         });
     }
     state.save_resume()?;
-    let resume = state.resume.clone();
-    let resume_path = state.resume_path.clone();
-    let task_id = id.clone();
-    let completed = Arc::new(move || remove_resume_task(&resume_path, &resume, &task_id));
+    let completed = if sse.is_none() {
+        let resume = state.resume.clone();
+        let resume_path = state.resume_path.clone();
+        let task_id = id.clone();
+        Some(
+            Arc::new(move || remove_resume_task(&resume_path, &resume, &task_id))
+                as tasks::CompletionSink,
+        )
+    } else {
+        None
+    };
     tasks::spawn_download_expand(
         app,
         client,
@@ -2680,7 +2717,8 @@ pub fn start_download(
         state.transfer_settings(),
         state.download_throttle.clone(),
         true,
-        Some(completed),
+        completed,
+        sse,
     );
     Ok(id)
 }
@@ -2869,6 +2907,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 shared,
                 state.transfer_settings(),
                 state.download_throttle.clone(),
+                current_sse_customer_key(&state)?,
             );
         }
         Some(RetryJob::SyncLocalDelete { bucket, paths }) => {
@@ -2965,6 +3004,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 state.download_throttle.clone(),
                 false,
                 None,
+                current_sse_customer_key(&state)?,
             );
         }
         Some(RetryJob::Delete {

@@ -134,6 +134,9 @@ const showSelect = ref(false);
 const selectExpression = ref("SELECT * FROM s3object s LIMIT 100");
 const selectFormat = ref<"csv" | "json">("csv");
 const selectResult = ref<import("./types").SelectResult | null>(null);
+const showSseCustomerKey = ref(false);
+const sseCustomerKey = ref("");
+const hasSseCustomerKey = ref(false);
 const commandQuery = ref("");
 const isReadOnly = computed(() => !!store.currentConnection()?.read_only);
 
@@ -332,6 +335,7 @@ async function beginUpload(paths: string[]) {
 async function confirmUpload() {
   if (!uploadPaths.value.length) return;
   try {
+    if (uploadEncryption.value === "sse-c") await api.setSseCustomerKey(uploadKmsKeyId.value);
     if (uploadChangesOnly.value && uploadPlan.value) {
       await api.startUploadPlan(store.browse.bucket, uploadPlan.value, uploadStorageClass.value, uploadVerifyAfter.value, uploadEncryption.value, uploadKmsKeyId.value || null);
     } else {
@@ -342,6 +346,19 @@ async function confirmUpload() {
   } catch (e) {
     store.toast(errorMessage(e), "error");
   }
+}
+
+async function openSseCustomerKey() {
+  try { hasSseCustomerKey.value = await api.hasSseCustomerKey(); showSseCustomerKey.value = true; }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+async function saveSseCustomerKey() {
+  try { await api.setSseCustomerKey(sseCustomerKey.value); sseCustomerKey.value = ""; hasSseCustomerKey.value = true; showSseCustomerKey.value = false; store.toast("SSE-C 会话密钥已设置，仅本次运行有效"); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
+}
+async function clearSseCustomerKey() {
+  try { await api.clearSseCustomerKey(); sseCustomerKey.value = ""; hasSseCustomerKey.value = false; store.toast("SSE-C 会话密钥已清除"); }
+  catch (e) { store.toast(errorMessage(e), "error"); }
 }
 
 async function refreshUploadPlan() {
@@ -934,7 +951,8 @@ async function removeBucket() {
               <button v-if="!isReadOnly" class="btn" @click="pickUpload(false)">上传文件</button>
                <button v-if="!isReadOnly" class="btn" @click="pickUpload(true)">上传文件夹</button>
                <button v-if="!isReadOnly" class="btn" @click="openSync('upload')">同步到 S3</button>
-              <button class="btn" @click="openSync('download')">同步到本地</button>
+               <button class="btn" @click="openSync('download')">同步到本地</button>
+               <button class="btn" @click="openSseCustomerKey">SSE-C 密钥{{ hasSseCustomerKey ? " ✓" : "" }}</button>
               <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
               <button class="btn" @click="openMultipartDialog">碎片管理</button>
               <button v-if="store.currentConnection()?.recycle_prefix" class="btn" @click="loadRecycle">回收站</button>
@@ -1032,6 +1050,8 @@ async function removeBucket() {
        <input v-if="uploadEncryption === 'sse-kms'" v-model="uploadKmsKeyId" class="input" placeholder="KMS Key ID（可选）" />
        <input v-if="uploadEncryption === 'sse-c'" v-model="uploadKmsKeyId" class="input" type="password" placeholder="Base64 编码的 32 字节 SSE-C 密钥（不会保存）" />
     </ConfirmDialog>
+
+    <div v-if="showSseCustomerKey" class="modal-mask"><div class="modal"><div class="modal-head">SSE-C 会话密钥</div><div class="modal-body copy-form"><p class="copy-hint">仅用于当前连接的预览、下载、ZIP、下载后打开与同步下载；密钥只保留在内存中，不会写入配置、历史或可恢复任务。</p><input v-model="sseCustomerKey" class="input" type="password" autocomplete="off" placeholder="Base64 编码的 32 字节 SSE-C 密钥" /></div><div class="modal-foot"><button class="btn" @click="showSseCustomerKey = false">取消</button><button v-if="hasSseCustomerKey" class="btn danger" @click="clearSseCustomerKey">清除</button><button class="btn primary" :disabled="!sseCustomerKey" @click="saveSseCustomerKey">保存到会话</button></div></div></div>
 
     <ConfirmDialog
       v-model="showDeleteConfirm"
