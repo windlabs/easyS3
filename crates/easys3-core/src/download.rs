@@ -1,6 +1,7 @@
 //! 下载：流式写盘 + 进度事件；取消时删除未完成的分段文件。
 //! 规格：`.agents/s3-operations.md`「3. 下载」。
 
+use crate::client_crypto::{decrypt_file, ClientEncryptionKey};
 use crate::error::{classify, CoreError};
 use crate::throttle::Throttle;
 use aws_sdk_s3::Client;
@@ -47,9 +48,19 @@ pub async fn download_object(
     cancel: Arc<AtomicBool>,
     throttle: Option<Arc<Throttle>>,
     sse: Option<&SseCustomerKey>,
+    client_encryption: Option<&ClientEncryptionKey>,
 ) -> Result<(), CoreError> {
     let result = download_object_resumable(
-        client, bucket, key, dest, progress, cancel, throttle, false, sse,
+        client,
+        bucket,
+        key,
+        dest,
+        progress,
+        cancel,
+        throttle,
+        false,
+        sse,
+        client_encryption,
     )
     .await;
     if result.is_err() {
@@ -81,6 +92,13 @@ pub async fn verify_download_etag(
     let Some(etag) = head.e_tag().map(|value| value.trim_matches('"')) else {
         return Ok(());
     };
+    if head
+        .metadata()
+        .and_then(|metadata| metadata.get("easys3-crypto"))
+        .is_some_and(|value| value == "aes256-gcm-v1")
+    {
+        return Ok(()); // ETag 对应密文，dest 为认证后的明文。
+    }
     if etag.contains('-') || etag.len() != 32 {
         return Ok(());
     }
@@ -121,6 +139,7 @@ pub async fn download_object_resumable(
     throttle: Option<Arc<Throttle>>,
     resume: bool,
     sse: Option<&SseCustomerKey>,
+    client_encryption: Option<&ClientEncryptionKey>,
 ) -> Result<(), CoreError> {
     if let Some(dir) = dest.parent() {
         if !dir.as_os_str().is_empty() {
@@ -165,6 +184,15 @@ pub async fn download_object_resumable(
         break (out, offset);
     };
     let total = out.content_length().unwrap_or(0).max(0) as u64 + offset;
+    let is_client_encrypted = out
+        .metadata()
+        .and_then(|metadata| metadata.get("easys3-crypto"))
+        .is_some_and(|value| value == "aes256-gcm-v1");
+    if is_client_encrypted && client_encryption.is_none() {
+        return Err(CoreError::Other(
+            "对象使用 easyS3 客户端 AES-256 加密，请先设置客户端 AES-256 会话密钥".into(),
+        ));
+    }
 
     let result = stream_to_file(
         out.body.into_async_read(),
@@ -180,6 +208,17 @@ pub async fn download_object_resumable(
         let _ = tokio::fs::remove_file(&partial).await;
     }
     result?;
+    if let Some(key) = client_encryption.filter(|_| is_client_encrypted) {
+        let decrypted = partial.with_extension("part.decrypt");
+        if let Err(error) = decrypt_file(&partial, &decrypted, key).await {
+            let _ = tokio::fs::remove_file(&decrypted).await;
+            return Err(error);
+        }
+        let _ = tokio::fs::remove_file(&partial).await;
+        return tokio::fs::rename(&decrypted, dest)
+            .await
+            .map_err(|e| CoreError::io(format!("完成解密下载失败 {}", dest.display()), e));
+    }
     tokio::fs::rename(&partial, dest)
         .await
         .map_err(|e| CoreError::io(format!("完成下载失败 {}", dest.display()), e))

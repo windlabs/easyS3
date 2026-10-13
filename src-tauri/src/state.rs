@@ -43,6 +43,9 @@ pub struct App {
     pub sso_token_expiry: Mutex<HashMap<String, u64>>,
     /// SSE-C 会话密钥，仅内存；不落盘、不进入任务历史。
     pub sse_customer_keys: Mutex<HashMap<String, easys3_core::download::SseCustomerKey>>,
+    /// 客户端 AES-256 对象密钥，仅内存；不落盘、不进入恢复任务。
+    pub client_encryption_keys:
+        Mutex<HashMap<String, easys3_core::client_crypto::ClientEncryptionKey>>,
     /// 传输设置快照（保存设置时更新；任务启动时读取快照）
     pub settings: Mutex<TransferSettings>,
     /// 全局上传限速（跨任务共享，保存设置热调整）
@@ -116,6 +119,7 @@ impl App {
             pending_sso: Mutex::new(HashMap::new()),
             sso_token_expiry: Mutex::new(HashMap::new()),
             sse_customer_keys: Mutex::new(HashMap::new()),
+            client_encryption_keys: Mutex::new(HashMap::new()),
             settings: Mutex::new(settings),
             upload_throttle,
             download_throttle,

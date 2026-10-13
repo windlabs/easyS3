@@ -16,6 +16,7 @@ pub struct ObjectDetail {
     pub metadata: Vec<MetadataEntry>,
     pub restore_status: Option<String>,
     pub server_side_encryption: Option<String>,
+    pub client_encryption: Option<String>,
 }
 
 pub async fn restore_archived_object(
@@ -796,6 +797,11 @@ pub async fn head_object(
         server_side_encryption: out
             .server_side_encryption()
             .map(|value| value.as_str().to_owned()),
+        client_encryption: out
+            .metadata()
+            .and_then(|metadata| metadata.get("easys3-crypto"))
+            .filter(|value| value.as_str() == "aes256-gcm-v1")
+            .map(|_| "AES-256-GCM（easyS3 客户端分块加密）".to_string()),
     })
 }
 

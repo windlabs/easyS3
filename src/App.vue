@@ -137,6 +137,9 @@ const selectResult = ref<import("./types").SelectResult | null>(null);
 const showSseCustomerKey = ref(false);
 const sseCustomerKey = ref("");
 const hasSseCustomerKey = ref(false);
+const showClientEncryptionKey = ref(false);
+const clientEncryptionKey = ref("");
+const hasClientEncryptionKey = ref(false);
 const commandQuery = ref("");
 const isReadOnly = computed(() => !!store.currentConnection()?.read_only);
 
@@ -360,6 +363,9 @@ async function clearSseCustomerKey() {
   try { await api.clearSseCustomerKey(); sseCustomerKey.value = ""; hasSseCustomerKey.value = false; store.toast("SSE-C 会话密钥已清除"); }
   catch (e) { store.toast(errorMessage(e), "error"); }
 }
+async function openClientEncryptionKey() { try { hasClientEncryptionKey.value = await api.hasClientEncryptionKey(); showClientEncryptionKey.value = true; } catch (e) { store.toast(errorMessage(e), "error"); } }
+async function saveClientEncryptionKey() { try { await api.setClientEncryptionKey(clientEncryptionKey.value); clientEncryptionKey.value = ""; hasClientEncryptionKey.value = true; showClientEncryptionKey.value = false; store.toast("客户端 AES-256 密钥已设置，仅本次运行有效"); } catch (e) { store.toast(errorMessage(e), "error"); } }
+async function clearClientEncryptionKey() { try { await api.clearClientEncryptionKey(); clientEncryptionKey.value = ""; hasClientEncryptionKey.value = false; store.toast("客户端 AES-256 密钥已清除"); } catch (e) { store.toast(errorMessage(e), "error"); } }
 
 async function refreshUploadPlan() {
   if (!uploadPaths.value.length) return;
@@ -953,6 +959,7 @@ async function removeBucket() {
                <button v-if="!isReadOnly" class="btn" @click="openSync('upload')">同步到 S3</button>
                <button class="btn" @click="openSync('download')">同步到本地</button>
                <button class="btn" @click="openSseCustomerKey">SSE-C 密钥{{ hasSseCustomerKey ? " ✓" : "" }}</button>
+               <button class="btn" @click="openClientEncryptionKey">客户端 AES 密钥{{ hasClientEncryptionKey ? " ✓" : "" }}</button>
               <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
               <button class="btn" @click="openMultipartDialog">碎片管理</button>
               <button v-if="store.currentConnection()?.recycle_prefix" class="btn" @click="loadRecycle">回收站</button>
@@ -1046,12 +1053,13 @@ async function removeBucket() {
           <option value="DEEP_ARCHIVE">DEEP_ARCHIVE</option>
         </select>
        </label>
-       <label class="upload-storage">服务端加密<select v-model="uploadEncryption" class="select"><option value="none">不加密</option><option value="sse-s3">SSE-S3（AES-256）</option><option value="sse-kms">SSE-KMS</option><option value="sse-c">SSE-C（会话密钥）</option></select></label>
+        <label class="upload-storage">加密<select v-model="uploadEncryption" class="select"><option value="none">不加密</option><option value="sse-s3">SSE-S3（AES-256）</option><option value="sse-kms">SSE-KMS</option><option value="sse-c">SSE-C（会话密钥）</option><option value="client-aes256">客户端 AES-256-GCM</option></select></label>
        <input v-if="uploadEncryption === 'sse-kms'" v-model="uploadKmsKeyId" class="input" placeholder="KMS Key ID（可选）" />
        <input v-if="uploadEncryption === 'sse-c'" v-model="uploadKmsKeyId" class="input" type="password" placeholder="Base64 编码的 32 字节 SSE-C 密钥（不会保存）" />
     </ConfirmDialog>
 
     <div v-if="showSseCustomerKey" class="modal-mask"><div class="modal"><div class="modal-head">SSE-C 会话密钥</div><div class="modal-body copy-form"><p class="copy-hint">仅用于当前连接的预览、下载、ZIP、下载后打开与同步下载；密钥只保留在内存中，不会写入配置、历史或可恢复任务。</p><input v-model="sseCustomerKey" class="input" type="password" autocomplete="off" placeholder="Base64 编码的 32 字节 SSE-C 密钥" /></div><div class="modal-foot"><button class="btn" @click="showSseCustomerKey = false">取消</button><button v-if="hasSseCustomerKey" class="btn danger" @click="clearSseCustomerKey">清除</button><button class="btn primary" :disabled="!sseCustomerKey" @click="saveSseCustomerKey">保存到会话</button></div></div></div>
+    <div v-if="showClientEncryptionKey" class="modal-mask"><div class="modal"><div class="modal-head">客户端 AES-256 会话密钥</div><div class="modal-body copy-form"><p class="copy-hint">仅用于 easyS3 客户端 AES-256-GCM 格式对象。密钥只在内存中保存；遗失后对象无法恢复。客户端加密上传任务不能跨重启恢复。</p><input v-model="clientEncryptionKey" class="input" type="password" autocomplete="off" placeholder="Base64 编码的 32 字节密钥" /></div><div class="modal-foot"><button class="btn" @click="showClientEncryptionKey = false">取消</button><button v-if="hasClientEncryptionKey" class="btn danger" @click="clearClientEncryptionKey">清除</button><button class="btn primary" :disabled="!clientEncryptionKey" @click="saveClientEncryptionKey">保存到会话</button></div></div></div>
 
     <ConfirmDialog
       v-model="showDeleteConfirm"

@@ -2,6 +2,7 @@
 //! HTML 不渲染（防 XSS）；PDF / 音视频以 data URL 交由前端内嵌展示，不经临时文件。
 //! 规格：`.agents/s3-operations.md`「5. 对象预览」。
 
+use crate::client_crypto::{decrypt_bytes, ClientEncryptionKey};
 use crate::download::SseCustomerKey;
 use crate::error::{classify, CoreError};
 use aws_sdk_s3::Client;
@@ -84,6 +85,17 @@ pub async fn preview_object_with_sse(
     media_limit_bytes: i64,
     sse: Option<&SseCustomerKey>,
 ) -> Result<PreviewData, CoreError> {
+    preview_object_with_encryption(client, bucket, key, media_limit_bytes, sse, None).await
+}
+
+pub async fn preview_object_with_encryption(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    media_limit_bytes: i64,
+    sse: Option<&SseCustomerKey>,
+    client_encryption: Option<&ClientEncryptionKey>,
+) -> Result<PreviewData, CoreError> {
     let ext = ext_of(key);
     if ext == "svg" {
         return Err(CoreError::Other(
@@ -104,7 +116,23 @@ pub async fn preview_object_with_sse(
         head_request.send().await
     }
     .map_err(|e| classify(&e))?;
-    let len = head.content_length().unwrap_or(0);
+    let is_client_encrypted = head
+        .metadata()
+        .and_then(|metadata| metadata.get("easys3-crypto"))
+        .is_some_and(|value| value == "aes256-gcm-v1");
+    if is_client_encrypted && client_encryption.is_none() {
+        return Err(CoreError::Other(
+            "对象使用 easyS3 客户端 AES-256 加密，请先设置客户端 AES-256 会话密钥".into(),
+        ));
+    }
+    let len = if is_client_encrypted {
+        head.metadata()
+            .and_then(|metadata| metadata.get("easys3-crypto-plain-length"))
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0)
+    } else {
+        head.content_length().unwrap_or(0)
+    };
 
     let is_image = IMAGE_EXTS.contains(&ext.as_str());
     let is_media = media_mime(&ext).is_some();
@@ -139,6 +167,11 @@ pub async fn preview_object_with_sse(
         .read_to_end(&mut bytes)
         .await
         .map_err(|e| CoreError::io("读取对象失败", e))?;
+    let bytes = if let Some(encryption) = client_encryption.filter(|_| is_client_encrypted) {
+        decrypt_bytes(&bytes, encryption)?
+    } else {
+        bytes
+    };
 
     if is_image {
         Ok(PreviewData::Image {
@@ -164,7 +197,26 @@ pub async fn thumbnail_object(
     bucket: &str,
     key: &str,
 ) -> Result<PreviewData, CoreError> {
-    match preview_object(client, bucket, key, 20 * 1024 * 1024).await? {
+    thumbnail_object_with_encryption(client, bucket, key, None, None).await
+}
+
+pub async fn thumbnail_object_with_encryption(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    sse: Option<&SseCustomerKey>,
+    client_encryption: Option<&ClientEncryptionKey>,
+) -> Result<PreviewData, CoreError> {
+    match preview_object_with_encryption(
+        client,
+        bucket,
+        key,
+        20 * 1024 * 1024,
+        sse,
+        client_encryption,
+    )
+    .await?
+    {
         data @ PreviewData::Image { .. } => Ok(data),
         _ => Err(CoreError::Other("该对象不是可生成缩略图的图片".into())),
     }

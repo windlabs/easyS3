@@ -39,6 +39,9 @@ export const recordAudit = (bucket: string, action: string, status: string, deta
 export const setSseCustomerKey = (key: string) => invoke<void>("set_sse_customer_key", { key });
 export const clearSseCustomerKey = () => invoke<void>("clear_sse_customer_key");
 export const hasSseCustomerKey = () => invoke<boolean>("has_sse_customer_key");
+export const setClientEncryptionKey = (key: string) => invoke<void>("set_client_encryption_key", { key });
+export const clearClientEncryptionKey = () => invoke<void>("clear_client_encryption_key");
+export const hasClientEncryptionKey = () => invoke<boolean>("has_client_encryption_key");
 export const costOverview = () => invoke<{ date: string; amount: string; unit: string }[]>("cost_overview");
 export const costByService = () => invoke<{ service: string; amount: string; unit: string }[]>("cost_by_service");
 export const costByUsageType = () => invoke<{ service: string; amount: string; unit: string }[]>("cost_by_usage_type");

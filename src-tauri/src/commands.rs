@@ -62,6 +62,13 @@ fn current_sse_customer_key(
     Ok(lock(&state.sse_customer_keys).get(&id).cloned())
 }
 
+fn current_client_encryption_key(
+    state: &App,
+) -> Result<Option<easys3_core::client_crypto::ClientEncryptionKey>, String> {
+    let id = state.current_connection()?.id;
+    Ok(lock(&state.client_encryption_keys).get(&id).cloned())
+}
+
 fn encrypt_export(text: &str, password: &str) -> Result<String, String> {
     let mut salt = [0u8; 16];
     let mut nonce = [0u8; 12];
@@ -490,6 +497,25 @@ pub fn clear_sse_customer_key(state: State<App>) -> Result<(), String> {
 pub fn has_sse_customer_key(state: State<App>) -> Result<bool, String> {
     let id = state.current_connection()?.id;
     Ok(lock(&state.sse_customer_keys).contains_key(&id))
+}
+#[tauri::command]
+pub fn set_client_encryption_key(state: State<App>, key: String) -> Result<(), String> {
+    let key = easys3_core::client_crypto::ClientEncryptionKey::from_base64(&key)
+        .map_err(|e| e.to_string())?;
+    let id = state.current_connection()?.id;
+    lock(&state.client_encryption_keys).insert(id, key);
+    Ok(())
+}
+#[tauri::command]
+pub fn clear_client_encryption_key(state: State<App>) -> Result<(), String> {
+    let id = state.current_connection()?.id;
+    lock(&state.client_encryption_keys).remove(&id);
+    Ok(())
+}
+#[tauri::command]
+pub fn has_client_encryption_key(state: State<App>) -> Result<bool, String> {
+    let id = state.current_connection()?.id;
+    Ok(lock(&state.client_encryption_keys).contains_key(&id))
 }
 #[derive(Serialize)]
 pub struct CostPoint {
@@ -989,6 +1015,7 @@ pub fn resume_task(state: State<App>, app: tauri::AppHandle, id: String) -> Resu
                 state.upload_throttle.clone(),
                 false,
                 None,
+                None,
                 Some(changed),
                 Some(checkpoints),
                 Some(completed),
@@ -1063,6 +1090,7 @@ pub fn resume_task(state: State<App>, app: tauri::AppHandle, id: String) -> Resu
                 true,
                 Some(completed),
                 None, // 密钥绝不进入恢复记录；重启后需重新设置会话密钥。
+                None,
             );
             let _ = created_at;
         }
@@ -1704,13 +1732,14 @@ pub fn start_sync_upload(
         client: client.clone(),
         bucket: bucket.clone(),
         files: files.clone(),
+        client_encryption: None,
     })));
     lock(&state.inner).tasks.insert(
         id.clone(),
         TaskEntry {
             cancel: cancel.clone(),
             shared: shared.clone(),
-            retry,
+            retry: retry.clone(),
         },
     );
     tasks::spawn_upload(
@@ -1724,6 +1753,7 @@ pub fn start_sync_upload(
         state.transfer_settings(),
         state.upload_throttle.clone(),
         false,
+        None,
         None,
         None,
         None,
@@ -1800,6 +1830,7 @@ pub fn start_sync_download(
         state.transfer_settings(),
         state.download_throttle.clone(),
         current_sse_customer_key(&state)?,
+        current_client_encryption_key(&state)?,
     );
     let mut ids = vec![id];
     if !plan.delete.is_empty() {
@@ -1849,6 +1880,7 @@ pub fn start_zip_download(
         shared,
         state.download_throttle.clone(),
         current_sse_customer_key(&state)?,
+        current_client_encryption_key(&state)?,
     );
     Ok(id)
 }
@@ -1896,9 +1928,17 @@ pub async fn preview_object(
     let (client, _) = state.current_control_client()?;
     let media_limit = state.transfer_settings().preview_limit_bytes();
     let sse = current_sse_customer_key(&state)?;
-    easys3_core::preview::preview_object_with_sse(&client, &bucket, &key, media_limit, sse.as_ref())
-        .await
-        .map_err(|e| e.to_string())
+    let client_encryption = current_client_encryption_key(&state)?;
+    easys3_core::preview::preview_object_with_encryption(
+        &client,
+        &bucket,
+        &key,
+        media_limit,
+        sse.as_ref(),
+        client_encryption.as_ref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1908,9 +1948,17 @@ pub async fn thumbnail_object(
     key: String,
 ) -> Result<PreviewData, String> {
     let (client, _) = state.current_control_client()?;
-    easys3_core::preview::thumbnail_object(&client, &bucket, &key)
-        .await
-        .map_err(|e| e.to_string())
+    let sse = current_sse_customer_key(&state)?;
+    let client_encryption = current_client_encryption_key(&state)?;
+    easys3_core::preview::thumbnail_object_with_encryption(
+        &client,
+        &bucket,
+        &key,
+        sse.as_ref(),
+        client_encryption.as_ref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2020,6 +2068,7 @@ pub fn open_object(
         settings.auto_retry_count as usize,
         state.download_throttle.clone(),
         current_sse_customer_key(&state)?,
+        current_client_encryption_key(&state)?,
     );
     Ok(id)
 }
@@ -2425,6 +2474,7 @@ pub fn start_upload(
         client: client.clone(),
         bucket: bucket.clone(),
         files: files.clone(),
+        client_encryption: None,
     })));
     {
         let mut inner = lock(&state.inner);
@@ -2443,6 +2493,17 @@ pub fn start_upload(
         .map(|value| value.parse::<aws_sdk_s3::types::StorageClass>())
         .transpose()
         .map_err(|_| "不支持的存储类别".to_string())?;
+    let client_encryption = if encryption.as_deref() == Some("client-aes256") {
+        Some(current_client_encryption_key(&state)?.ok_or("请先设置客户端 AES-256 会话密钥")?)
+    } else {
+        None
+    };
+    *lock(&retry) = Some(RetryJob::Upload {
+        client: client.clone(),
+        bucket: bucket.clone(),
+        files: files.clone(),
+        client_encryption: client_encryption.clone(),
+    });
     let encryption = match encryption.as_deref().unwrap_or("none") {
         "none" => None,
         "sse-s3" => Some(easys3_core::upload::ServerEncryption::S3),
@@ -2462,13 +2523,14 @@ pub fn start_upload(
                 key_md5_base64: STANDARD.encode(Md5::digest(raw)),
             })
         }
+        "client-aes256" => None,
         _ => return Err("不支持的服务端加密类型".to_string()),
     };
     let settings = state.transfer_settings();
     let storage_name = storage
         .clone()
         .filter(|value| !value.is_empty() && value != "STANDARD");
-    {
+    if client_encryption.is_none() {
         let mut resume = lock(&state.resume);
         resume.tasks.push(ResumeTask::Upload {
             id: id.clone(),
@@ -2488,19 +2550,19 @@ pub fn start_upload(
             created_at: lock(&shared.info).created_at,
         });
     }
-    state.save_resume()?;
-    let resume = state.resume.clone();
-    let resume_path = state.resume_path.clone();
-    let task_id = id.clone();
-    let checkpoint_resume = resume.clone();
-    let checkpoint_resume_path = resume_path.clone();
-    let checkpoint_task_id = task_id.clone();
-    let checkpoints = Arc::new(
-        move |key: &str, checkpoint: easys3_core::upload::MultipartCheckpoint| {
-            {
-                let mut file = lock(&checkpoint_resume);
-                if let Some(ResumeTask::Upload { files, .. }) = file.tasks.iter_mut().find(
-                        |task| matches!(task, ResumeTask::Upload { id, .. } if id == &checkpoint_task_id),
+    if client_encryption.is_none() {
+        state.save_resume()?;
+    }
+    let checkpoints: Option<tasks::CheckpointSink> = if client_encryption.is_none() {
+        let resume = state.resume.clone();
+        let resume_path = state.resume_path.clone();
+        let task_id = id.clone();
+        Some(Arc::new(
+            move |key: &str, checkpoint: easys3_core::upload::MultipartCheckpoint| {
+                {
+                    let mut file = lock(&resume);
+                    if let Some(ResumeTask::Upload { files, .. }) = file.tasks.iter_mut().find(
+                        |task| matches!(task, ResumeTask::Upload { id, .. } if id == &task_id),
                     ) {
                         if let Some(item) = files.iter_mut().find(|item| item.key == key) {
                             item.upload_id = checkpoint.upload_id;
@@ -2512,11 +2574,24 @@ pub fn start_upload(
                                 .collect();
                         }
                     }
-            }
-            save_resume_snapshot(&checkpoint_resume_path, &checkpoint_resume);
-        },
-    );
-    let completed = Arc::new(move || remove_resume_task(&resume_path, &resume, &task_id));
+                }
+                save_resume_snapshot(&resume_path, &resume);
+            },
+        ))
+    } else {
+        None
+    };
+    let completed = if client_encryption.is_none() {
+        let resume = state.resume.clone();
+        let resume_path = state.resume_path.clone();
+        let task_id = id.clone();
+        Some(
+            Arc::new(move || remove_resume_task(&resume_path, &resume, &task_id))
+                as tasks::CompletionSink,
+        )
+    } else {
+        None
+    };
     tasks::spawn_upload(
         app,
         client,
@@ -2529,9 +2604,10 @@ pub fn start_upload(
         state.upload_throttle.clone(),
         verify,
         encryption,
-        Some(checkpoints),
+        client_encryption,
+        checkpoints,
         None,
-        Some(completed),
+        completed,
     );
     Ok(id)
 }
@@ -2582,13 +2658,14 @@ pub async fn start_upload_plan(
         client: client.clone(),
         bucket: bucket.clone(),
         files: files.clone(),
+        client_encryption: None,
     })));
     lock(&state.inner).tasks.insert(
         id.clone(),
         TaskEntry {
             cancel: cancel.clone(),
             shared: shared.clone(),
-            retry,
+            retry: retry.clone(),
         },
     );
     let class = storage
@@ -2597,6 +2674,19 @@ pub async fn start_upload_plan(
         .map(str::parse)
         .transpose()
         .map_err(|_| "不支持的存储类别".to_string())?;
+    let client_encryption = if encryption.as_deref() == Some("client-aes256") {
+        current_client_encryption_key(&state)?
+            .ok_or("请先设置客户端 AES-256 会话密钥")?
+            .into()
+    } else {
+        None
+    };
+    *lock(&retry) = Some(RetryJob::Upload {
+        client: client.clone(),
+        bucket: bucket.clone(),
+        files: files.clone(),
+        client_encryption: client_encryption.clone(),
+    });
     let encryption = match encryption.as_deref().unwrap_or("none") {
         "none" => None,
         "sse-s3" => Some(easys3_core::upload::ServerEncryption::S3),
@@ -2616,6 +2706,7 @@ pub async fn start_upload_plan(
                 key_md5_base64: STANDARD.encode(Md5::digest(raw)),
             })
         }
+        "client-aes256" => None,
         _ => return Err("不支持的服务端加密类型".to_string()),
     };
     tasks::spawn_upload(
@@ -2630,6 +2721,7 @@ pub async fn start_upload_plan(
         state.upload_throttle.clone(),
         verify,
         encryption,
+        client_encryption,
         None,
         None,
         None,
@@ -2661,6 +2753,7 @@ pub fn start_download(
     ));
     let retry = Arc::new(Mutex::new(None));
     let sse = current_sse_customer_key(&state)?;
+    let client_encryption = current_client_encryption_key(&state)?;
     {
         let mut inner = lock(&state.inner);
         inner.tasks.insert(
@@ -2672,7 +2765,7 @@ pub fn start_download(
             },
         );
     }
-    if sse.is_none() {
+    if sse.is_none() && client_encryption.is_none() {
         let mut resume = lock(&state.resume);
         resume.tasks.push(ResumeTask::Download {
             id: id.clone(),
@@ -2690,8 +2783,10 @@ pub fn start_download(
             created_at: lock(&shared.info).created_at,
         });
     }
-    state.save_resume()?;
-    let completed = if sse.is_none() {
+    if sse.is_none() && client_encryption.is_none() {
+        state.save_resume()?;
+    }
+    let completed = if sse.is_none() && client_encryption.is_none() {
         let resume = state.resume.clone();
         let resume_path = state.resume_path.clone();
         let task_id = id.clone();
@@ -2719,6 +2814,7 @@ pub fn start_download(
         true,
         completed,
         sse,
+        client_encryption,
     );
     Ok(id)
 }
@@ -2806,6 +2902,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
             client,
             bucket,
             files,
+            client_encryption,
         }) => {
             let subset: Vec<_> = files
                 .into_iter()
@@ -2837,6 +2934,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                             client: client.clone(),
                             bucket: bucket.clone(),
                             files: subset.clone(),
+                            client_encryption: client_encryption.clone(),
                         });
                 }
             }
@@ -2853,6 +2951,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 state.upload_throttle.clone(),
                 false,
                 None,
+                client_encryption,
                 None,
                 None,
                 None,
@@ -2908,6 +3007,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 state.transfer_settings(),
                 state.download_throttle.clone(),
                 current_sse_customer_key(&state)?,
+                current_client_encryption_key(&state)?,
             );
         }
         Some(RetryJob::SyncLocalDelete { bucket, paths }) => {
@@ -3005,6 +3105,7 @@ pub fn retry_task(state: State<App>, app: tauri::AppHandle, task_id: String) -> 
                 false,
                 None,
                 current_sse_customer_key(&state)?,
+                current_client_encryption_key(&state)?,
             );
         }
         Some(RetryJob::Delete {

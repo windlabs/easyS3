@@ -141,6 +141,7 @@ pub fn spawn_sync_download(
     settings: TransferSettings,
     throttle: Arc<Throttle>,
     sse: Option<easys3_core::download::SseCustomerKey>,
+    client_encryption: Option<easys3_core::client_crypto::ClientEncryptionKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -158,6 +159,7 @@ pub fn spawn_sync_download(
                 &throttle,
                 true,
                 sse.as_ref(),
+                client_encryption.as_ref(),
             )
             .await;
         });
@@ -350,6 +352,7 @@ pub fn spawn_zip(
     shared: Arc<TaskShared>,
     throttle: Arc<Throttle>,
     sse: Option<easys3_core::download::SseCustomerKey>,
+    client_encryption: Option<easys3_core::client_crypto::ClientEncryptionKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -410,6 +413,7 @@ pub fn spawn_zip(
                     cancel.clone(),
                     Some(throttle.clone()),
                     sse.as_ref(),
+                    client_encryption.as_ref(),
                 )
                 .await
                 {
@@ -479,6 +483,7 @@ pub enum RetryJob {
         client: aws_sdk_s3::Client,
         bucket: String,
         files: Vec<(PathBuf, String)>,
+        client_encryption: Option<easys3_core::client_crypto::ClientEncryptionKey>,
     },
     /// P1-07 已展开的同步下载：保留精确目标路径，重试时不会重新规划或覆盖跳过项。
     SyncDownload {
@@ -526,7 +531,7 @@ pub struct TaskEntry {
     pub retry: Arc<Mutex<Option<RetryJob>>>,
 }
 
-type CheckpointSink = Arc<dyn Fn(&str, MultipartCheckpoint) + Send + Sync>;
+pub type CheckpointSink = Arc<dyn Fn(&str, MultipartCheckpoint) + Send + Sync>;
 pub type CompletionSink = Arc<dyn Fn() + Send + Sync>;
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -763,6 +768,7 @@ pub fn spawn_upload(
     throttle: Arc<Throttle>,
     verify_after_upload: bool,
     encryption: Option<easys3_core::upload::ServerEncryption>,
+    client_encryption: Option<easys3_core::client_crypto::ClientEncryptionKey>,
     checkpoints: Option<CheckpointSink>,
     resume_checkpoints: Option<Arc<HashMap<String, MultipartCheckpoint>>>,
     completed: Option<CompletionSink>,
@@ -787,6 +793,8 @@ pub fn spawn_upload(
                     throttle: Some(throttle.clone()),
                     verify_after_upload,
                     encryption: encryption.clone(),
+                    client_encryption: client_encryption.clone(),
+                    client_plain_size: None,
                 };
                 // 瞬时错误自动重试次数（设置页可配，默认 3；0 = 关闭）
                 let auto_retries = settings.auto_retry_count as usize;
@@ -896,6 +904,7 @@ pub fn spawn_download_expand(
     resumable: bool,
     completed: Option<CompletionSink>,
     sse: Option<easys3_core::download::SseCustomerKey>,
+    client_encryption: Option<easys3_core::client_crypto::ClientEncryptionKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -964,6 +973,7 @@ pub fn spawn_download_expand(
                     &throttle,
                     resumable,
                     sse.as_ref(),
+                    client_encryption.as_ref(),
                 )
                 .await;
                 if matches!(lock(&shared.info).status, TaskStatus::Done) {
@@ -996,6 +1006,7 @@ async fn run_download_jobs(
     throttle: &Arc<Throttle>,
     resumable: bool,
     sse: Option<&easys3_core::download::SseCustomerKey>,
+    client_encryption: Option<&easys3_core::client_crypto::ClientEncryptionKey>,
 ) {
     for job in jobs {
         if cancel.load(Ordering::Relaxed) {
@@ -1028,6 +1039,7 @@ async fn run_download_jobs(
                     Some(throttle.clone()),
                     true,
                     sse,
+                    client_encryption,
                 )
                 .await
             } else {
@@ -1040,6 +1052,7 @@ async fn run_download_jobs(
                     cancel.clone(),
                     Some(throttle.clone()),
                     sse,
+                    client_encryption,
                 )
                 .await
             };
@@ -1351,6 +1364,7 @@ pub fn spawn_open(
     auto_retries: usize,
     throttle: Arc<Throttle>,
     sse: Option<easys3_core::download::SseCustomerKey>,
+    client_encryption: Option<easys3_core::client_crypto::ClientEncryptionKey>,
 ) {
     let probe = shared.clone();
     schedule(&probe, move || {
@@ -1372,6 +1386,7 @@ pub fn spawn_open(
                     cancel.clone(),
                     Some(throttle.clone()),
                     sse.as_ref(),
+                    client_encryption.as_ref(),
                 )
                 .await;
                 if result.is_ok()

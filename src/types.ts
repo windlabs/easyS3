@@ -58,6 +58,7 @@ export interface ObjectDetail {
   metadata: { key: string; value: string }[];
   restore_status?: string | null;
   server_side_encryption?: string | null;
+  client_encryption?: string | null;
 }
 export interface ObjectVersionInfo {
   version_id: string; size: number; last_modified: string | null; is_delete_marker: boolean; is_latest: boolean;

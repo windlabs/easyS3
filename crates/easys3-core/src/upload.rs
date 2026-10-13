@@ -8,6 +8,7 @@
 //! - 流式读取本地文件，禁止整文件读入内存（一次仅一个分片在内存）；
 //! - 取消或失败必须 abort_multipart_upload 清理残片。
 
+use crate::client_crypto::{encrypt_file, ClientEncryptionKey};
 use crate::error::{classify, CoreError};
 use crate::throttle::Throttle;
 use aws_sdk_s3::primitives::ByteStream;
@@ -42,6 +43,10 @@ pub struct UploadOptions {
     /// 上传完成后 HeadObject 回读 ETag；multipart 复合 ETag 不做 MD5 比较。
     pub verify_after_upload: bool,
     pub encryption: Option<ServerEncryption>,
+    /// 客户端 AES-256-GCM；密钥只由调用方在内存中传入。
+    pub client_encryption: Option<ClientEncryptionKey>,
+    /// 内部字段：加密对象记录原始长度；不由前端或持久化任务提供。
+    pub client_plain_size: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +115,61 @@ pub async fn upload_file_resumable(
     checkpoint: Option<MultipartCheckpoint>,
     checkpoint_changed: Option<CheckpointFn>,
 ) -> Result<(), CoreError> {
+    if let Some(encryption_key) = opts.client_encryption.clone() {
+        // 加密后密文字节、分片边界均变化，恢复记录不能混用原文件检查点。
+        let temporary = std::env::temp_dir().join(format!(
+            "easys3-client-crypto-{:016x}",
+            rand::random::<u64>()
+        ));
+        let plain_size = tokio::fs::metadata(path)
+            .await
+            .map_err(|e| CoreError::io(format!("读取文件失败 {}", path.display()), e))?
+            .len();
+        encrypt_file(path, &temporary, &encryption_key).await?;
+        let mut encrypted_opts = opts;
+        encrypted_opts.client_encryption = None;
+        encrypted_opts.client_plain_size = Some(plain_size);
+        let result = upload_file_resumable_inner(
+            client,
+            bucket,
+            key,
+            &temporary,
+            progress,
+            cancel,
+            encrypted_opts,
+            None,
+            None,
+        )
+        .await;
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return result;
+    }
+    upload_file_resumable_inner(
+        client,
+        bucket,
+        key,
+        path,
+        progress,
+        cancel,
+        opts,
+        checkpoint,
+        checkpoint_changed,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upload_file_resumable_inner(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+    path: &Path,
+    progress: ProgressFn,
+    cancel: Arc<AtomicBool>,
+    opts: UploadOptions,
+    checkpoint: Option<MultipartCheckpoint>,
+    checkpoint_changed: Option<CheckpointFn>,
+) -> Result<(), CoreError> {
     let size = tokio::fs::metadata(path)
         .await
         .map_err(|e| CoreError::io(format!("读取文件失败 {}", path.display()), e))?
@@ -136,6 +196,11 @@ pub async fn upload_file_resumable(
         if let Some(class) = opts.storage_class {
             request = request.storage_class(class);
         }
+        if let Some(plain_size) = opts.client_plain_size {
+            request = request
+                .metadata("easys3-crypto", "aes256-gcm-v1")
+                .metadata("easys3-crypto-plain-length", plain_size.to_string());
+        }
         if let Some(encryption) = opts.encryption.as_ref() {
             request = match encryption {
                 ServerEncryption::S3 => {
@@ -159,7 +224,7 @@ pub async fn upload_file_resumable(
             };
         }
         request.send().await.map_err(|e| classify(&e))?;
-        if opts.verify_after_upload {
+        if opts.verify_after_upload && opts.client_plain_size.is_none() {
             verify_uploaded_etag(client, bucket, key, path, size).await?;
         }
         progress(size, size);
@@ -261,6 +326,11 @@ async fn upload_multipart(
             let mut request = client.create_multipart_upload().bucket(bucket).key(key);
             if let Some(ref class) = opts.storage_class {
                 request = request.storage_class(class.clone());
+            }
+            if let Some(plain_size) = opts.client_plain_size {
+                request = request
+                    .metadata("easys3-crypto", "aes256-gcm-v1")
+                    .metadata("easys3-crypto-plain-length", plain_size.to_string());
             }
             if let Some(encryption) = opts.encryption.as_ref() {
                 request = match encryption {

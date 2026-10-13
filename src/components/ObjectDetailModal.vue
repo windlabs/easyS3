@@ -73,7 +73,8 @@ async function restoreArchive() { if (!props.detail || !confirm("将发起归档
           <dt>ETag</dt><dd class="break">{{ detail.e_tag || "—" }}</dd>
           <dt>存储类别</dt><dd>{{ detail.storage_class || "STANDARD" }}</dd>
           <dt>Content-Type</dt><dd>{{ detail.content_type || "—" }}</dd>
-          <dt>服务端加密</dt><dd>{{ detail.server_side_encryption || "未启用" }}</dd>
+           <dt>服务端加密</dt><dd>{{ detail.server_side_encryption || "未启用" }}</dd>
+           <dt>客户端加密</dt><dd>{{ detail.client_encryption || "未启用" }}</dd>
         </dl>
         <div v-if="archival()" class="meta-title">归档恢复</div>
         <div v-if="archival()" class="access-panel"><p>状态：{{ detail.restore_status || "尚未恢复" }}</p><label class="tag-row"><span>保留天数</span><input v-model.number="restoreDays" class="input" type="number" min="1" max="365" /></label><label class="tag-row"><span>恢复速度</span><select v-model="restoreTier" class="select"><option value="Expedited">快速</option><option value="Standard">标准</option><option value="Bulk">批量</option></select></label><button class="btn" @click="restoreArchive">发起恢复</button></div>

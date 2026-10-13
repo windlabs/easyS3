@@ -1822,6 +1822,7 @@ dependencies = [
 name = "easys3-core"
 version = "1.0.7"
 dependencies = [
+ "aes-gcm",
  "aws-sdk-costexplorer",
  "aws-sdk-s3",
  "aws-sdk-sso",
@@ -1833,6 +1834,7 @@ dependencies = [
  "chrono",
  "csv",
  "md-5 0.10.6",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "tempfile",
