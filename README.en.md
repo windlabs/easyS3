@@ -52,6 +52,11 @@ easyS3 turns everyday chores — "see what's in a bucket, drop files in, pull ar
 | 6 | **Object preview** | Preview images and UTF-8 text inline; oversized or binary files prompt to download instead |
 | 7 | **Copy Key** | One click to copy an object's full Key for pasting into code or the CLI |
 | 8 | **Task center** | A global floating panel listing running / finished / failed tasks, with cancel, retry and clear |
+| 9 | **Transfer resilience** | Resumable uploads/downloads, persisted transfer queue, automatic retries, throttling, concurrency and part-size settings, ETag integrity checks |
+| 10 | **Object management** | Version list/restore, tags, read-only ACL, Content-Type/custom metadata editing, archive restore, multipart cleanup |
+| 11 | **Advanced queries** | Global search DSL, cancellable S3 Select for CSV/JSON Lines, and local S3 Inventory indexing with filters |
+| 12 | **Connections & security** | AssumeRole/ExternalId, IAM Identity Center SSO, read-only connections, SSE-S3/KMS/SSE-C and client-side AES-256-GCM |
+| 13 | **Operations & productivity** | Bucket/prefix usage, Cost Explorer trends, operation history, recycle bin, IaC/SDK export and clipboard paste upload |
 
 ### Highlights
 
@@ -61,6 +66,11 @@ easyS3 turns everyday chores — "see what's in a bucket, drop files in, pull ar
 - **Readable, categorized errors**: connection, authentication, permission and not-found errors are classified into human-readable messages that never contain `secret_key`.
 - **Credential safety baseline**: the config file is readable only by the current user (Unix `0600`), and secrets are redacted in error messages and logs.
 - **Chinese and special-character filenames**: object Keys support Chinese, spaces and Unicode as-is; local filenames and Keys are converted without extra escaping.
+- **Resilient transfers**: multipart upload checkpoints and download `.part` files can be explicitly resumed after restart; tasks keep their own client snapshot and retry transient failures automatically.
+- **Flexible authentication**: supports AK/SK, custom endpoints, single-bucket connections, AssumeRole (including ExternalId), and IAM Identity Center device login; temporary credentials remain in memory.
+- **Server-side and client-side encryption**: uploads support SSE-S3, SSE-KMS and SSE-C; client-side AES-256-GCM uses independently authenticated 1 MiB chunks and supports streaming upload, download and preview.
+- **Enterprise queries and cost views**: S3 Select supports CSV/JSON Lines, Inventory can be imported for zero-S3-API local search, and Cost Explorer failures clearly fall back to bucket byte usage.
+- **Batch operations**: version restore, archive restore, bucket policy/CORS/Lifecycle/website configuration, recycle-bin soft delete/restore, operation-history export and clipboard paste upload.
 
 ## Screenshots
 
@@ -181,9 +191,11 @@ Versions follow SemVer, e.g. `1.2.3` or `1.2.3-beta.1`. Without `VERSION`, `make
 
 ## Usage
 
-1. **First run**: create a connection (name, endpoint, AK/SK) → test it → save → you land on the bucket list (or a restricted bucket).
-2. **Everyday use**: pick a connection → bucket list → enter a bucket → browse the virtual directories → upload / download / delete / preview / copy Key.
-3. **Switching connections**: possible at any time; in-progress upload / download tasks are neither interrupted nor cancelled.
+1. **First run**: create a connection (name, endpoint, region, AK/SK, or optional single-bucket/AssumeRole/SSO settings) → test it → save.
+2. **Everyday use**: pick a connection → bucket list → enter a bucket → browse virtual directories → upload / download / delete / preview / copy Key.
+3. **Advanced features**: use the configuration menu for transfer settings, cost views and the command palette; use object details for versions, tags, metadata, archive restore and read-only ACL information.
+4. **Encrypted objects**: before using SSE-C or client AES-256-GCM, set a Base64 32-byte session key from the toolbar. Keys are never persisted; losing a client-encryption key makes the object unrecoverable.
+5. **Switching connections**: possible at any time; in-progress upload / download tasks are neither interrupted nor cancelled.
 
 ## Architecture
 
@@ -218,6 +230,9 @@ easyS3 is layered to decouple business rules from the GUI / IPC, keeping the cor
 - Business logic always goes into `easys3-core`; `src-tauri` only orchestrates commands and manages task lifecycles.
 - A task is a self-contained unit holding its own client snapshot, cancelled via `Arc<AtomicBool>`, with progress pushed through the `task-update` event (throttled to 50 ms).
 - Connection configs live in `connections.json` under the system app config directory, read and written on the Rust side; the frontend never uses `localStorage`.
+- Secret Keys use the system Keychain where available, with an AES-GCM encrypted-file fallback; `connections.json` never stores a plaintext Secret Key.
+- SSO access tokens are encrypted through SecretStore; STS/SSO temporary credentials, SSE-C keys and client AES keys are memory-only.
+- SSE-C and client-AES transfers are excluded from cross-restart recovery; in-process failed-task retries can still reuse the memory-only key.
 
 ## Project Structure
 
@@ -255,15 +270,11 @@ make verify           # equivalent to frontend-build + fmt-check + clippy + test
 
 The following are **explicitly out of scope** for now (open an Issue to discuss if you need them):
 
-- Bucket creation / deletion
-- ACL / permission management, STS / temporary credentials
-- Versioning (listing / restoring previous versions)
-- Resumable transfers (a cancelled upload/download restarts from scratch)
-- Cross-connection copy / sync / move
-- Presigned URL sharing
-- Persisting transfer tasks (tasks do not survive an app restart)
-- Config import / export
-- Auto-update (download a new installer and install over the old version)
+- Cross-connection copy / sync / move; copy, move and sync are limited to the active connection.
+- ACL writes and full IAM permission management; ACL is currently read-only.
+- Athena queries; the current query paths are S3 Select and local S3 Inventory indexing.
+- Generic, authoritative S3 bucket-level billing attribution; Cost Explorer has no reliable universal bucket dimension, so the app shows service/usage costs or bucket byte usage.
+- SOCKS5/HTTP proxy configuration; the current AWS Smithy connector does not expose an acceptable unified proxy implementation.
 
 ## Contributing
 
