@@ -103,7 +103,7 @@ Release packages are built per platform and available from the project's GitHub 
 | Linux | AppImage, `.deb` (x86_64 and ARM64) |
 | macOS | `.dmg` (Intel and Apple Silicon) |
 
-> Note: **macOS packages must be built on macOS** — Tauri does not support cross-compiling to macOS. There is no auto-update yet; download a new version and install it over the old one.
+> Note: **macOS packages must be built on macOS** — Tauri does not support cross-compiling to macOS. In-app auto-update is not available yet; download a new version and install it over the old one.
 
 ### Unsigned installers
 

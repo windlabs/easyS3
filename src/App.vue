@@ -2,7 +2,6 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { check } from "@tauri-apps/plugin-updater";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -113,7 +112,6 @@ const usageLoading = ref(false);
 const gridView = ref(localStorage.getItem("easys3.grid-view") === "true");
 function toggleGridView() { gridView.value = !gridView.value; localStorage.setItem("easys3.grid-view", String(gridView.value)); }
 const showCommandPalette = ref(false);
-const updateMessage = ref("");
 const showAudit = ref(false);
 const auditEntries = ref<AuditEntry[]>([]);
 const auditDays = ref(0);
@@ -724,14 +722,6 @@ async function openBrowserWindow() {
   catch (e) { store.toast(errorMessage(e), "error"); }
 }
 
-async function checkForUpdate() {
-  updateMessage.value = "正在检查更新…";
-  try {
-    const update = await check();
-    updateMessage.value = update ? `发现新版本 ${update.version}，将在下载完成后安装。` : "当前已是最新版本。";
-    if (update) { await update.downloadAndInstall(); }
-  } catch (e) { updateMessage.value = `检查更新失败：${errorMessage(e)}`; }
-}
 async function generateCodeExport() { try { codeExportResult.value = await api.generateIac(store.browse.bucket, codeExportFormat.value); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function loadPolicyResource() { try { policyText.value = policyResource.value === "policy" ? await api.bucketPolicy(store.browse.bucket) : policyResource.value === "cors" ? JSON.stringify(await api.bucketCors(store.browse.bucket), null, 2) : policyResource.value === "lifecycle" ? JSON.stringify(await api.bucketLifecycle(store.browse.bucket), null, 2) : JSON.stringify(await api.bucketWebsite(store.browse.bucket), null, 2); policyOriginal.value = policyText.value; objectLockInfo.value = await api.objectLock(store.browse.bucket); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function openPolicy() { showPolicy.value = true; await loadPolicyResource(); }
@@ -848,7 +838,6 @@ async function removeBucket() {
         @manage-connections="showConnectionTransfer = true"
         :task-notifications="store.notifyOnTaskFinish.enabled"
         @set-task-notifications="store.setNotifyOnTaskFinish"
-        @check-update="checkForUpdate"
         @open-audit="showAudit = true; loadAudit()"
         @open-cost="showCost = true; loadCostFallback()"
       />
@@ -1101,7 +1090,6 @@ async function removeBucket() {
     <div v-if="showUsage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶 / 前缀用量统计</div><div class="modal-body"><p class="warn-text">大桶统计会产生较多列表请求，可能耗时较长。</p><p v-if="usageLoading">正在递归扫描…</p><template v-else-if="usageStats"><p>对象数：<b>{{ usageStats.object_count }}</b></p><p>总大小：<b>{{ formatBytes(usageStats.total_bytes) }}</b></p></template></div><div class="modal-foot"><button class="btn" @click="showUsage = false">关闭</button><button class="btn" :disabled="usageLoading" @click="loadUsage">重新统计</button><button class="btn primary" :disabled="!usageStats" @click="exportUsage">导出 JSON</button></div></div></div>
     <div v-if="showRecycle" class="modal-mask"><div class="modal audit-modal"><div class="modal-head">回收站（{{ recyclePrefix }}）</div><div class="modal-body"><p class="copy-hint">回收站对象默认隐藏于正常浏览。恢复后会移除回收站副本。</p><label>恢复目标前缀 <input v-model="recycleRestorePrefix" class="input" placeholder="桶根（留空）" /></label><div class="audit-list"><label v-for="entry in recycleEntries" :key="entry.key" class="audit-row"><input v-model="recycleSelected" type="checkbox" :value="entry.key" /><span>{{ entry.key }}</span><span>{{ entry.is_dir ? '文件夹' : formatBytes(entry.size) }}</span></label><p v-if="!recycleEntries.length" class="muted">回收站为空。</p></div></div><div class="modal-foot"><button class="btn" @click="showRecycle = false">关闭</button><button class="btn" :disabled="!recycleSelected.size" @click="restoreRecycle">恢复所选</button><button class="btn danger" :disabled="!recycleEntries.length" @click="emptyRecycle">清空回收站</button></div></div></div>
     <div v-if="showCost" class="modal-mask"><div class="modal audit-modal"><div class="modal-head">成本 / 用量概览</div><div class="modal-body"><p v-if="costError" class="warn-text">Cost Explorer 不可用：{{ costError }}。以下为按桶扫描的存储字节量，不代表费用。</p><p v-if="costLoading">正在读取成本 / 统计各桶字节量…</p><template v-else><div v-if="costPoints.length" class="cost-chart"><div v-for="item in costPoints" :key="`chart-${item.date}`" class="cost-bar"><span class="cost-value">{{ Number(item.amount).toFixed(2) }}</span><div class="cost-fill" :style="{ height: `${Math.max(2, (Number(item.amount) / maxDailyCost) * 100)}%` }" /><span class="cost-date">{{ item.date.slice(5) }}</span></div></div><div class="audit-list"><div v-for="item in costPoints" :key="item.date" class="audit-row"><span>{{ item.date }}</span><span>真实费用</span><span>{{ item.amount }} {{ item.unit }}</span></div><div v-for="item in costServices" :key="item.service" class="audit-row"><span>{{ item.service }}</span><span>服务费用</span><span>{{ item.amount }} {{ item.unit }}</span></div><div v-for="item in costUsageTypes" :key="`usage-${item.service}`" class="audit-row"><span>{{ item.service }}</span><span>用量费用分类</span><span>{{ item.amount }} {{ item.unit }}</span></div><div v-for="item in costBuckets" :key="item.bucket" class="audit-row"><span>{{ item.bucket }}</span><span>对象 {{ item.stats.object_count }}</span><span>{{ formatBytes(item.stats.total_bytes) }}</span></div></div></template></div><div class="modal-foot"><button class="btn" @click="showCost = false">关闭</button><button class="btn" :disabled="costLoading" @click="exportCost">导出 JSON</button><button class="btn primary" :disabled="costLoading" @click="loadCostFallback">重新统计</button></div></div></div>
-    <div v-if="updateMessage" class="update-toast" @click="updateMessage = ''">{{ updateMessage }}</div>
     <div v-if="showAudit" class="modal-mask"><div class="modal audit-modal"><div class="modal-head">本机操作历史</div><div class="modal-body copy-form"><label>时间范围 <select v-model.number="auditDays" class="select" @change="loadAudit"><option :value="0">全部</option><option :value="1">最近 1 天</option><option :value="7">最近 7 天</option><option :value="30">最近 30 天</option></select></label><div class="audit-list"><div v-for="entry in auditEntries" :key="`${entry.at}-${entry.action}-${entry.detail}`" class="audit-row"><span>{{ new Date(entry.at * 1000).toLocaleString() }}</span><span>{{ entry.connection }} / {{ entry.bucket }}</span><span>{{ entry.action }} · {{ entry.status }}</span><span>{{ entry.detail || '—' }}</span></div><p v-if="!auditEntries.length" class="muted">暂无符合条件的历史记录。</p></div></div><div class="modal-foot"><button class="btn" @click="showAudit = false">关闭</button><button class="btn primary" @click="exportAudit">导出 JSON</button></div></div></div>
     <div v-if="showCodeExport" class="modal-mask"><div class="modal small-modal"><div class="modal-head">导出桶 IaC</div><div class="modal-body copy-form"><label>格式 <select v-model="codeExportFormat" class="select" @change="generateCodeExport"><option value="terraform">Terraform</option><option value="cloudformation">CloudFormation</option><option value="cdk">CDK</option></select></label><textarea class="input code-export" readonly :value="codeExportResult" /></div><div class="modal-foot"><button class="btn" @click="showCodeExport = false">关闭</button><button class="btn primary" @click="copyCodeExport">复制</button></div></div></div>
     <div v-if="showPolicy" class="modal-mask"><div class="modal policy-modal"><div class="modal-head">桶配置编辑</div><div class="modal-body copy-form"><label>资源 <select v-model="policyResource" class="select" @change="loadPolicyResource"><option value="policy">Bucket Policy</option><option value="cors">CORS</option><option value="lifecycle">Lifecycle</option><option value="website">静态网站</option></select></label><p class="copy-hint">保存前请检查变更。ACL 写入不在此功能范围内。</p><div v-if="objectLockInfo" class="object-lock">Object Lock（只读）：{{ objectLockInfo.enabled ? `已启用 · ${objectLockInfo.mode || '未设置模式'} · ${objectLockInfo.days ? `${objectLockInfo.days} 天` : objectLockInfo.years ? `${objectLockInfo.years} 年` : '未设置保留期'}` : '未启用' }}</div><textarea v-model="policyText" class="input policy-editor" /><details><summary>查看结构化文本 diff（{{ policyDiff.length }} 行）</summary><pre class="policy-diff"><span v-for="(line,index) in policyDiff" :key="index" :class="line.kind">{{ line.text }}
@@ -1373,7 +1361,6 @@ async function removeBucket() {
 .command-row { display: flex; justify-content: space-between; width: 100%; padding: 9px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; border-radius: 5px; }
 .command-row:hover { background: var(--hover); color: var(--primary); }
 kbd { color: var(--muted); font-size: 11px; }
-.update-toast { position: fixed; right: 16px; top: 52px; z-index: 250; max-width: 360px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px var(--shadow); cursor: pointer; }
 .audit-modal { width: min(900px, 94vw); }
 .audit-list { max-height: 360px; overflow: auto; }
 .audit-row { display: grid; grid-template-columns: 160px 160px 130px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
