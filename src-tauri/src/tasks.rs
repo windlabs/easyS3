@@ -393,7 +393,12 @@ pub fn spawn_zip(
                     false
                 }
             });
-            lock(&shared.info).files_total = jobs.len() + lock(&shared.info).files_failed;
+            {
+                // `std::sync::Mutex` 不可重入；同一 guard 内读取失败数，避免 ZIP
+                // 展开完成后在首个 GetObject 前自锁，任务会表现为永久 0 B / 0 B。
+                let mut info = lock(&shared.info);
+                info.files_total = jobs.len() + info.files_failed;
+            }
             let temp_root =
                 std::env::temp_dir().join(format!("easys3-zip-{}", lock(&shared.info).id));
             if let Err(error) = tokio::fs::create_dir_all(&temp_root).await {
