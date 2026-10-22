@@ -1850,6 +1850,24 @@ pub fn start_zip_download(
     if items.is_empty() {
         return Err("请选择要打包的文件或文件夹".to_string());
     }
+    let destination = PathBuf::from(dest);
+    if destination
+        .extension()
+        .is_none_or(|ext| !ext.eq_ignore_ascii_case("zip"))
+    {
+        return Err("目标文件必须使用 .zip 扩展名".to_string());
+    }
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    if !parent.is_dir() {
+        return Err(format!("ZIP 保存目录不存在：{}", parent.display()));
+    }
+    // 在入队前验证目标路径可创建，避免前端只得到“已开始”而后台才报告权限错误。
+    let probe = parent.join(format!(".easys3-zip-probe-{}", Uuid::new_v4()));
+    std::fs::File::create(&probe).map_err(|e| format!("无法在 ZIP 保存目录创建文件：{e}"))?;
+    let _ = std::fs::remove_file(probe);
     let (client, _) = state.current_client()?;
     let (control, _) = state.current_control_client()?;
     let id = Uuid::new_v4().to_string();
@@ -1875,7 +1893,7 @@ pub fn start_zip_download(
         control,
         bucket,
         items,
-        PathBuf::from(dest),
+        destination,
         cancel,
         shared,
         state.download_throttle.clone(),

@@ -358,6 +358,8 @@ pub fn spawn_zip(
     schedule(&probe, move || {
         tauri::async_runtime::spawn(async move {
             mark_running(&shared);
+            // ZIP 先展开目录，可能长时间没有对象体进度；立即推送使任务中心可见。
+            emit_task(&app, &shared, true);
             let mut jobs: Vec<(String, String)> = Vec::new();
             for item in items {
                 if cancel.load(Ordering::Relaxed) {
@@ -372,7 +374,8 @@ pub fn spawn_zip(
                         })),
                         Err(CoreError::Cancelled) => break,
                         Err(error) => {
-                            record_failure(&shared, &item.key, format!("列出对象失败：{error}"))
+                            record_failure(&shared, &item.key, format!("列出对象失败：{error}"));
+                            emit_task(&app, &shared, true);
                         }
                     }
                 } else {
@@ -380,10 +383,24 @@ pub fn spawn_zip(
                     jobs.push((item.key.clone(), item.key.clone()));
                 }
             }
+            let mut entries = HashSet::new();
+            jobs.retain(|(key, entry)| {
+                let normalized = entry.replace('\\', "/");
+                if entries.insert(normalized) {
+                    true
+                } else {
+                    record_failure(&shared, key, format!("ZIP 内条目路径重复：{entry}"));
+                    false
+                }
+            });
             lock(&shared.info).files_total = jobs.len() + lock(&shared.info).files_failed;
             let temp_root =
                 std::env::temp_dir().join(format!("easys3-zip-{}", lock(&shared.info).id));
-            let _ = tokio::fs::create_dir_all(&temp_root).await;
+            if let Err(error) = tokio::fs::create_dir_all(&temp_root).await {
+                record_failure(&shared, "ZIP", format!("创建 ZIP 临时目录失败：{error}"));
+                finish_task(&app, &cancel, &shared);
+                return;
+            }
             let zip_file = match std::fs::File::create(&destination) {
                 Ok(file) => file,
                 Err(error) => {
@@ -392,6 +409,7 @@ pub fn spawn_zip(
                         &destination.to_string_lossy(),
                         format!("创建 ZIP 失败：{error}"),
                     );
+                    emit_task(&app, &shared, true);
                     finish_task(&app, &cancel, &shared);
                     return;
                 }
