@@ -127,10 +127,10 @@ export const startCopy = (
   invoke<string>("start_copy", {
     bucket,
     items,
-    target_prefix: targetPrefix,
-    target_bucket: targetBucket,
+    targetPrefix,
+    targetBucket,
     conflict,
-    new_name: newName,
+    newName,
     remove,
   });
 export const openObject = (bucket: string, key: string) =>
