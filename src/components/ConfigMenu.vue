@@ -20,6 +20,7 @@ const emit = defineEmits<{
   setTaskNotifications: [value: boolean];
   openAudit: [];
   openCost: [];
+  openSecuritySession: [];
 }>();
 
 const open = ref(false);
@@ -83,6 +84,7 @@ function openTransferSettings() {
   close();
 }
 function manageConnections() { emit("manageConnections"); close(); }
+function openSecuritySession() { emit("openSecuritySession"); close(); }
 
 function onDocumentPointerDown(event: PointerEvent) {
   if (open.value && root.value && !root.value.contains(event.target as Node)) close();
@@ -220,6 +222,7 @@ onBeforeUnmount(() => {
       <button class="menu-item" type="button" role="menuitemcheckbox" :aria-checked="taskNotifications" @click="emit('setTaskNotifications', !taskNotifications)"><span class="menu-check">{{ taskNotifications ? "✓" : "" }}</span>任务完成通知</button>
       <button class="menu-item" type="button" role="menuitem" @click="emit('openAudit')"><span class="menu-check" />操作历史…</button>
       <button class="menu-item" type="button" role="menuitem" @click="emit('openCost')"><span class="menu-check" />成本 / 用量概览…</button>
+      <button class="menu-item" type="button" role="menuitem" @click="openSecuritySession"><span class="menu-check" />连接安全会话…</button>
     </div>
   </div>
 </template>

@@ -5,7 +5,7 @@ import type { Entry, FsItem } from "../types";
 import { formatBytes, formatTime } from "../utils";
 import { selection } from "../store";
 
-const props = defineProps<{ entries: Entry[]; loading: boolean; hasMore: boolean; grid?: boolean; bucket?: string }>();
+const props = defineProps<{ entries: Entry[]; loading: boolean; hasMore: boolean; grid?: boolean; bucket?: string; readOnly?: boolean }>();
 const thumbnails = ref<Record<string, string>>({});
 const pending = new Set<string>();
 function imageKey(name: string) { return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name); }
@@ -171,11 +171,11 @@ function onScroll() {
             <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('preview', e)">预览</button>
             <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('detail', e)">详情</button>
             <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('openFile', e)">打开</button>
-            <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('copy', e, false)">复制</button>
-            <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('copy', e, true)">移动/改名</button>
+            <button v-if="!props.readOnly && !e.is_dir" class="btn sm ghost" @click="emit('copy', e, false)">复制</button>
+            <button v-if="!props.readOnly && !e.is_dir" class="btn sm ghost" @click="emit('copy', e, true)">移动/改名</button>
             <button class="btn sm ghost" @click="emit('copyKey', e)">复制Key</button>
             <button class="btn sm ghost" @click="emit('download', asItem(e))">下载</button>
-            <button class="btn sm ghost danger" @click="emit('del', asItem(e))">删除</button>
+            <button v-if="!props.readOnly" class="btn sm ghost danger" @click="emit('del', asItem(e))">删除</button>
           </td>
         </tr>
         <tr v-if="sorted.length > virtualEnd" class="virtual-spacer"><td :colspan="showStorage ? 6 : 5" :style="{ height: ((sorted.length - virtualEnd) * rowHeight) + 'px' }" /></tr>

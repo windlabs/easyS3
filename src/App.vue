@@ -138,6 +138,7 @@ const hasSseCustomerKey = ref(false);
 const showClientEncryptionKey = ref(false);
 const clientEncryptionKey = ref("");
 const hasClientEncryptionKey = ref(false);
+const showSecuritySession = ref(false);
 const commandQuery = ref("");
 const isReadOnly = computed(() => !!store.currentConnection()?.read_only);
 
@@ -364,6 +365,13 @@ async function clearSseCustomerKey() {
 async function openClientEncryptionKey() { try { hasClientEncryptionKey.value = await api.hasClientEncryptionKey(); showClientEncryptionKey.value = true; } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function saveClientEncryptionKey() { try { await api.setClientEncryptionKey(clientEncryptionKey.value); clientEncryptionKey.value = ""; hasClientEncryptionKey.value = true; showClientEncryptionKey.value = false; store.toast("客户端 AES-256 密钥已设置，仅本次运行有效"); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function clearClientEncryptionKey() { try { await api.clearClientEncryptionKey(); clientEncryptionKey.value = ""; hasClientEncryptionKey.value = false; store.toast("客户端 AES-256 密钥已清除"); } catch (e) { store.toast(errorMessage(e), "error"); } }
+async function openSecuritySession() {
+  if (!store.app.currentConnectionId) { store.toast("请先选择连接", "error"); return; }
+  try {
+    [hasSseCustomerKey.value, hasClientEncryptionKey.value] = await Promise.all([api.hasSseCustomerKey(), api.hasClientEncryptionKey()]);
+    showSecuritySession.value = true;
+  } catch (e) { store.toast(errorMessage(e), "error"); }
+}
 
 async function refreshUploadPlan() {
   if (!uploadPaths.value.length) return;
@@ -840,6 +848,7 @@ async function removeBucket() {
         @set-task-notifications="store.setNotifyOnTaskFinish"
         @open-audit="showAudit = true; loadAudit()"
         @open-cost="showCost = true; loadCostFallback()"
+        @open-security-session="openSecuritySession"
       />
     </header>
 
@@ -874,8 +883,8 @@ async function removeBucket() {
             </button>
           </div>
         </div>
-        <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
-          <div class="bucket-title">桶列表 <button class="btn sm" @click="showBucketDialog = true">新建桶</button></div>
+          <div v-if="store.browse.mode === 'buckets'" class="bucket-list">
+           <div class="bucket-title">桶列表 <button v-if="!isReadOnly" class="btn sm" @click="showBucketDialog = true">新建桶</button></div>
           <input v-model="bucketFilter" class="input bucket-filter" placeholder="筛选已加载桶名" />
           <div v-if="store.browse.loading" class="muted pad">加载中…</div>
           <template v-else>
@@ -933,7 +942,7 @@ async function removeBucket() {
           />
           <div v-else class="bucket-label">桶列表</div>
             <div class="spacer" />
-            <button class="btn" @click="openBrowserWindow">新窗口</button>
+             <button class="btn" @click="openBrowserWindow">新窗口</button>
           <template v-if="store.browse.mode === 'objects'">
             <input
               class="input filter"
@@ -945,17 +954,20 @@ async function removeBucket() {
               <button class="btn" @click="toggleGridView">{{ gridView ? "表格视图" : "网格视图" }}</button>
               <button v-if="!isReadOnly" class="btn" @click="pickUpload(false)">上传文件</button>
                <button v-if="!isReadOnly" class="btn" @click="pickUpload(true)">上传文件夹</button>
-               <button v-if="!isReadOnly" class="btn" @click="openSync('upload')">同步到 S3</button>
-               <button class="btn" @click="openSync('download')">同步到本地</button>
-               <button class="btn" @click="openSseCustomerKey">SSE-C 密钥{{ hasSseCustomerKey ? " ✓" : "" }}</button>
-               <button class="btn" @click="openClientEncryptionKey">客户端 AES 密钥{{ hasClientEncryptionKey ? " ✓" : "" }}</button>
-              <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
-              <button class="btn" @click="openMultipartDialog">碎片管理</button>
-              <button v-if="store.currentConnection()?.recycle_prefix" class="btn" @click="loadRecycle">回收站</button>
-              <button class="btn" @click="showUsage = true; loadUsage()">统计</button>
-              <button class="btn" @click="showCodeExport = true; generateCodeExport()">导出 IaC</button>
-              <button v-if="!isReadOnly" class="btn" @click="openPolicy">Bucket Policy</button>
-              <button class="btn" @click="openPresign('put')">生成上传链接</button>
+                <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
+               <details class="tools-menu">
+                 <summary class="btn">更多工具…</summary>
+                 <div class="tools-popover">
+                   <button v-if="!isReadOnly" class="btn ghost" @click="openSync('upload')">同步到 S3…</button>
+                   <button class="btn ghost" @click="openSync('download')">同步到本地…</button>
+                   <button class="btn ghost" @click="openMultipartDialog">未完成上传管理…</button>
+                   <button v-if="store.currentConnection()?.recycle_prefix" class="btn ghost" @click="loadRecycle">回收站…</button>
+                   <button class="btn ghost" @click="showUsage = true; loadUsage()">桶 / 前缀统计…</button>
+                   <button class="btn ghost" @click="showCodeExport = true; generateCodeExport()">导出 IaC…</button>
+                   <button v-if="!isReadOnly" class="btn ghost" @click="openPolicy">桶配置…</button>
+                   <button class="btn ghost" @click="openPresign('put')">生成预签名上传链接…</button>
+                 </div>
+               </details>
           </template>
           <span v-if="store.selection.size" class="selected-count">
             已选 {{ store.selection.size }} 项
@@ -991,8 +1003,9 @@ async function removeBucket() {
           :entries="store.browse.entries"
           :loading="store.browse.loading"
           :has-more="!!store.browse.nextToken"
-          :grid="gridView"
-          :bucket="store.browse.bucket"
+           :grid="gridView"
+           :bucket="store.browse.bucket"
+           :read-only="isReadOnly"
           @open="store.openEntry"
            @preview="preview"
            @detail="detail"
@@ -1049,6 +1062,7 @@ async function removeBucket() {
 
     <div v-if="showSseCustomerKey" class="modal-mask"><div class="modal"><div class="modal-head">SSE-C 会话密钥</div><div class="modal-body copy-form"><p class="copy-hint">仅用于当前连接的预览、下载、ZIP、下载后打开与同步下载；密钥只保留在内存中，不会写入配置、历史或可恢复任务。</p><input v-model="sseCustomerKey" class="input" type="password" autocomplete="off" placeholder="Base64 编码的 32 字节 SSE-C 密钥" /></div><div class="modal-foot"><button class="btn" @click="showSseCustomerKey = false">取消</button><button v-if="hasSseCustomerKey" class="btn danger" @click="clearSseCustomerKey">清除</button><button class="btn primary" :disabled="!sseCustomerKey" @click="saveSseCustomerKey">保存到会话</button></div></div></div>
     <div v-if="showClientEncryptionKey" class="modal-mask"><div class="modal"><div class="modal-head">客户端 AES-256 会话密钥</div><div class="modal-body copy-form"><p class="copy-hint">仅用于 easyS3 客户端 AES-256-GCM 格式对象。密钥只在内存中保存；遗失后对象无法恢复。客户端加密上传任务不能跨重启恢复。</p><input v-model="clientEncryptionKey" class="input" type="password" autocomplete="off" placeholder="Base64 编码的 32 字节密钥" /></div><div class="modal-foot"><button class="btn" @click="showClientEncryptionKey = false">取消</button><button v-if="hasClientEncryptionKey" class="btn danger" @click="clearClientEncryptionKey">清除</button><button class="btn primary" :disabled="!clientEncryptionKey" @click="saveClientEncryptionKey">保存到会话</button></div></div></div>
+    <div v-if="showSecuritySession" class="modal-mask"><div class="modal small-modal"><div class="modal-head">连接安全会话</div><div class="modal-body copy-form"><p class="copy-hint">密钥仅用于当前连接、仅保留到本次程序退出；不会写入配置、日志、历史或恢复任务。</p><div class="copy-row"><span class="copy-label">SSE-C</span><span>{{ hasSseCustomerKey ? "已设置" : "未设置" }}</span><button class="btn sm" @click="showSecuritySession = false; openSseCustomerKey()">{{ hasSseCustomerKey ? "更换" : "设置" }}</button><button v-if="hasSseCustomerKey" class="btn sm danger" @click="clearSseCustomerKey">清除</button></div><div class="copy-row"><span class="copy-label">客户端 AES</span><span>{{ hasClientEncryptionKey ? "已设置" : "未设置" }}</span><button class="btn sm" @click="showSecuritySession = false; openClientEncryptionKey()">{{ hasClientEncryptionKey ? "更换" : "设置" }}</button><button v-if="hasClientEncryptionKey" class="btn sm danger" @click="clearClientEncryptionKey">清除</button></div></div><div class="modal-foot"><button class="btn primary" @click="showSecuritySession = false">关闭</button></div></div></div>
 
     <ConfirmDialog
       v-model="showDeleteConfirm"
@@ -1084,7 +1098,7 @@ async function removeBucket() {
     />
 
     <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" @save-text="savePreviewText" />
-    <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" />
+    <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" :read-only="isReadOnly" />
     <div v-if="showSelect" class="modal-mask"><div class="modal policy-modal"><div class="modal-head">S3 Select</div><div class="modal-body copy-form"><label>输入格式 <select v-model="selectFormat" class="select"><option value="csv">CSV（首行列名）</option><option value="json">JSON Lines</option></select></label><textarea v-model="selectExpression" class="input" /><p class="copy-hint">扫描量可能产生 S3 Select 费用，请确认查询范围与 SQL 条件。</p><button class="btn" @click="runSelect">执行查询</button><p v-if="selectResult" class="muted">扫描 {{ formatBytes(selectResult.bytes_scanned) }} · 处理 {{ formatBytes(selectResult.bytes_processed) }} · 返回 {{ formatBytes(selectResult.bytes_returned) }}</p><pre v-if="selectResult" class="policy-diff">{{ selectResult.records }}</pre></div><div class="modal-foot"><button class="btn" @click="showSelect = false">关闭</button><button class="btn" :disabled="!selectResult" @click="exportSelectResult(false)">导出 CSV</button><button class="btn primary" :disabled="!selectResult" @click="exportSelectResult(true)">导出 JSON</button></div></div></div>
     <SettingsDialog v-model="showSettings" />
     <div v-if="showUsage" class="modal-mask"><div class="modal small-modal"><div class="modal-head">桶 / 前缀用量统计</div><div class="modal-body"><p class="warn-text">大桶统计会产生较多列表请求，可能耗时较长。</p><p v-if="usageLoading">正在递归扫描…</p><template v-else-if="usageStats"><p>对象数：<b>{{ usageStats.object_count }}</b></p><p>总大小：<b>{{ formatBytes(usageStats.total_bytes) }}</b></p></template></div><div class="modal-foot"><button class="btn" @click="showUsage = false">关闭</button><button class="btn" :disabled="usageLoading" @click="loadUsage">重新统计</button><button class="btn primary" :disabled="!usageStats" @click="exportUsage">导出 JSON</button></div></div></div>
@@ -1379,4 +1393,9 @@ kbd { color: var(--muted); font-size: 11px; }
 .multipart-row { display: grid; grid-template-columns: 22px 1fr 180px 48px; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
 .break { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .parts-panel { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; max-height: 180px; overflow: auto; }
+.tools-menu { position: relative; }
+.tools-menu summary { list-style: none; }
+.tools-menu summary::-webkit-details-marker { display: none; }
+.tools-popover { position: absolute; z-index: 25; right: 0; top: calc(100% + 5px); width: 220px; display: grid; gap: 3px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 24px var(--shadow); }
+.tools-popover .btn { text-align: left; }
 </style>

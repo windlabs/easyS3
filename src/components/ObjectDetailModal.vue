@@ -7,7 +7,7 @@ import { useMaskClose } from "./useMaskClose";
 
 const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
 const { onMousedown, onClick } = useMaskClose(() => emit("update:modelValue", false));
-const props = defineProps<{ modelValue: boolean; detail: ObjectDetail | null; bucket: string }>();
+const props = defineProps<{ modelValue: boolean; detail: ObjectDetail | null; bucket: string; readOnly?: boolean }>();
 const versions = ref<ObjectVersionInfo[]>([]);
 const versionsLoading = ref(false);
 const versionsError = ref("");
@@ -78,7 +78,7 @@ async function restoreArchive() { if (!props.detail || !confirm("将发起归档
         </dl>
         <div v-if="archival()" class="meta-title">归档恢复</div>
         <div v-if="archival()" class="access-panel"><p>状态：{{ detail.restore_status || "尚未恢复" }}</p><label class="tag-row"><span>保留天数</span><input v-model.number="restoreDays" class="input" type="number" min="1" max="365" /></label><label class="tag-row"><span>恢复速度</span><select v-model="restoreTier" class="select"><option value="Expedited">快速</option><option value="Standard">标准</option><option value="Bulk">批量</option></select></label><button class="btn" @click="restoreArchive">发起恢复</button></div>
-        <div class="meta-title version-head"><span>对象元数据</span><button class="btn sm" @click="beginMetadataEdit">编辑</button></div>
+        <div class="meta-title version-head"><span>对象元数据</span><button v-if="!readOnly" class="btn sm" @click="beginMetadataEdit">编辑</button></div>
         <div v-if="editingMetadata" class="access-panel"><label class="tag-row"><span>Content-Type</span><input v-model="editContentType" class="input" /></label><div v-for="(item, index) in editMetadata" :key="index" class="tag-row"><input v-model="item.key" class="input" placeholder="x-amz-meta-* 名称" /><input v-model="item.value" class="input" placeholder="值" /><button class="btn sm" @click="editMetadata.splice(index, 1)">删除</button></div><div class="tag-actions"><button class="btn sm" @click="editMetadata.push({ key: '', value: '' })">新增元数据</button><button class="btn sm primary" @click="saveMetadata">保存</button></div></div>
         <div v-if="detail.metadata.length" class="meta-title">自定义元数据</div>
         <dl v-if="detail.metadata.length">
@@ -100,7 +100,7 @@ async function restoreArchive() { if (!props.detail || !confirm("将发起归档
         <div v-if="accessError" class="version-error">{{ accessError }}</div>
         <div v-if="accessLoaded" class="access-panel">
           <div v-for="(tag, index) in tags" :key="index" class="tag-row"><input v-model="tag.key" class="input" placeholder="标签名" /><input v-model="tag.value" class="input" placeholder="标签值" /><button class="btn sm" @click="removeTag(index)">删除</button></div>
-          <div class="tag-actions"><button class="btn sm" @click="addTag">新增标签</button><button class="btn sm primary" @click="saveTags">保存标签</button></div>
+          <div v-if="!readOnly" class="tag-actions"><button class="btn sm" @click="addTag">新增标签</button><button class="btn sm primary" @click="saveTags">保存标签</button></div>
           <div v-if="acl" class="acl"><b>ACL（只读）</b><div>所有者：{{ acl.owner || "—" }}</div><div v-for="grant in acl.grants" :key="grant">{{ grant }}</div></div>
         </div>
       </div>
