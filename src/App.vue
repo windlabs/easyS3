@@ -38,6 +38,7 @@ const editingConnection = ref<ConnectionConfig | null>(null);
 
 // ---------- 上传确认 ----------
 const showUploadConfirm = ref(false);
+const uploadBusy = ref(false);
 const uploadPlan = ref<UploadPlan | null>(null);
 const uploadPaths = ref<string[]>([]);
 const uploadStorageClass = ref("STANDARD");
@@ -48,6 +49,7 @@ const uploadKmsKeyId = ref("");
 
 // ---------- 删除确认 ----------
 const showDeleteConfirm = ref(false);
+const deleteBusy = ref(false);
 const deleteItems = ref<FsItem[]>([]);
 const deleteCount = ref(0);
 const deleteToRecycle = ref(false);
@@ -59,6 +61,7 @@ const recycleRestorePrefix = ref("");
 
 // ---------- 下载冲突 ----------
 const showConflict = ref(false);
+const downloadBusy = ref(false);
 const downloadItems = ref<FsItem[]>([]);
 const downloadDest = ref("");
 
@@ -66,6 +69,7 @@ const downloadDest = ref("");
 const showPreview = ref(false);
 const previewData = ref<PreviewData | null>(null);
 const previewName = ref("");
+const previewKey = ref("");
 const showObjectDetail = ref(false);
 const objectDetail = ref<import("./types").ObjectDetail | null>(null);
 const showSettings = ref(false);
@@ -336,6 +340,8 @@ async function beginUpload(paths: string[]) {
 
 async function confirmUpload() {
   if (!uploadPaths.value.length) return;
+  if (uploadBusy.value) return;
+  uploadBusy.value = true;
   try {
     if (uploadEncryption.value === "sse-c") await api.setSseCustomerKey(uploadKmsKeyId.value);
     if (uploadChangesOnly.value && uploadPlan.value) {
@@ -347,6 +353,8 @@ async function confirmUpload() {
     showUploadConfirm.value = false;
   } catch (e) {
     store.toast(errorMessage(e), "error");
+  } finally {
+    uploadBusy.value = false;
   }
 }
 
@@ -430,6 +438,8 @@ async function downloadZipSelection() {
 }
 
 async function confirmDownload(policy: ConflictPolicy) {
+  if (downloadBusy.value) return;
+  downloadBusy.value = true;
   showConflict.value = false;
   try {
     await api.startDownload(
@@ -440,7 +450,10 @@ async function confirmDownload(policy: ConflictPolicy) {
     );
     store.tasksStore.open = true;
   } catch (e) {
+    showConflict.value = true;
     store.toast(errorMessage(e), "error");
+  } finally {
+    downloadBusy.value = false;
   }
 }
 
@@ -482,6 +495,8 @@ function deleteSelection() {
 }
 
 async function confirmDelete() {
+  if (deleteBusy.value) return;
+  deleteBusy.value = true;
   try {
     const recyclePrefix = store.currentConnection()?.recycle_prefix;
     if (deleteToRecycle.value && recyclePrefix) {
@@ -495,6 +510,8 @@ async function confirmDelete() {
     showDeleteConfirm.value = false;
   } catch (e) {
     store.toast(errorMessage(e), "error");
+  } finally {
+    deleteBusy.value = false;
   }
 }
 
@@ -507,12 +524,17 @@ async function preview(entry: Entry) {
       entry.key,
     );
     previewName.value = entry.name;
+    previewKey.value = entry.key;
     showPreview.value = true;
   } catch (e) {
     store.toast(errorMessage(e), "error");
   }
 }
 async function savePreviewText(content: string) {
+  if (isReadOnly.value) {
+    store.toast("当前连接处于只读模式，不能编辑对象", "error");
+    return;
+  }
   if (!previewName.value || !confirm("将覆盖远端对象，他人此间的修改会被覆盖。是否继续？")) return;
   try { await api.saveTextObject(store.browse.bucket, store.browse.prefix + previewName.value, content); previewData.value = { kind: "text", content }; await store.refresh(); store.toast("文本已保存"); }
   catch (e) { store.toast(errorMessage(e), "error"); }
@@ -771,7 +793,7 @@ async function runSearch() {
       searchResults.value = event.payload.results; searchError.value = event.payload.error || ""; searching.value = false; unlisten();
     });
   }
-  catch (e) { searchError.value = errorMessage(e); }
+  catch (e) { searchError.value = errorMessage(e); searching.value = false; }
 }
 async function importInventory() { const path = await openDialog({ title: "导入 S3 Inventory CSV", filters: [{ name: "CSV", extensions: ["csv"] }] }); if (!path || Array.isArray(path)) return; try { const count = await api.importInventory(path); store.toast(`已导入 ${count} 条 Inventory 索引`); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function runInventorySearch() { try { inventoryResults.value = await api.searchInventory(searchQuery.value); } catch (e) { store.toast(errorMessage(e), "error"); } }
@@ -888,8 +910,9 @@ async function removeBucket() {
           <input v-model="bucketFilter" class="input bucket-filter" placeholder="筛选已加载桶名" />
           <div v-if="store.browse.loading" class="muted pad">加载中…</div>
           <template v-else>
-            <div v-if="!store.browse.buckets.length" class="muted pad">
-              暂无桶。若账号无 ListBuckets 权限，可在连接设置中填写限定桶。
+             <div v-if="!store.browse.buckets.length" class="muted pad">
+               暂无桶。若账号无 ListBuckets 权限，可在连接设置中填写限定桶。
+               <div v-if="!isReadOnly" class="empty-actions"><button class="btn primary sm" @click="showBucketDialog = true">新建桶</button></div>
             </div>
             <div v-else-if="!store.browse.buckets.some((bucket) => bucket.toLowerCase().includes(bucketFilter.trim().toLowerCase()))" class="muted pad">没有匹配的桶。</div>
             <a
@@ -899,7 +922,7 @@ async function removeBucket() {
               :title="b"
               @click="store.selectBucket(b)"
             >
-              <span class="bucket-icon">🪣</span>{{ b }}<button class="btn sm bucket-manage" @click.stop="manageBucket(b)">管理</button>
+               <span class="bucket-icon">🪣</span>{{ b }}<button v-if="!isReadOnly" class="btn sm bucket-manage" @click.stop="manageBucket(b)">管理</button>
             </a>
           </template>
         </div>
@@ -943,20 +966,20 @@ async function removeBucket() {
           <div v-else class="bucket-label">桶列表</div>
             <div class="spacer" />
              <button class="btn" @click="openBrowserWindow">新窗口</button>
-          <template v-if="store.browse.mode === 'objects'">
+           <template v-if="store.browse.mode === 'objects'">
             <input
               class="input filter"
               placeholder="按前缀筛选"
               :value="store.browse.filter"
               @input="onFilterInput"
             />
-              <button class="btn" @click="showSearch = true">全局搜索</button>
+               <button class="btn" @click="showSearch = true">搜索</button>
               <button class="btn" @click="toggleGridView">{{ gridView ? "表格视图" : "网格视图" }}</button>
               <button v-if="!isReadOnly" class="btn" @click="pickUpload(false)">上传文件</button>
                <button v-if="!isReadOnly" class="btn" @click="pickUpload(true)">上传文件夹</button>
                 <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
-               <details class="tools-menu">
-                 <summary class="btn">更多工具…</summary>
+                <details class="tools-menu">
+                  <summary class="btn">更多工具…</summary>
                  <div class="tools-popover">
                    <button v-if="!isReadOnly" class="btn ghost" @click="openSync('upload')">同步到 S3…</button>
                    <button class="btn ghost" @click="openSync('download')">同步到本地…</button>
@@ -969,30 +992,31 @@ async function removeBucket() {
                  </div>
                </details>
           </template>
-          <span v-if="store.selection.size" class="selected-count">
-            已选 {{ store.selection.size }} 项
-          </span>
-          <button class="btn" :disabled="!store.selection.size" @click="downloadSelection">
+           <span v-if="store.selection.size" class="selected-count">
+             已选 {{ store.selection.size }} 项
+           </span>
+           <button v-if="store.selection.size" class="btn ghost" @click="store.selection.clear()">清除选择</button>
+           <button class="btn selection-action" :disabled="!store.selection.size" @click="downloadSelection">
             下载
           </button>
-          <button class="btn" :disabled="!store.selection.size" @click="downloadZipSelection">下载 ZIP</button>
-          <button class="btn" :disabled="!store.selection.size" @click="openPresign('get')">分享链接</button>
-          <button class="btn" :disabled="store.selection.size !== 1" @click="objectDetail = store.browse.entries.find((entry) => store.selection.has(entry.key)) ? ({ key: store.browse.entries.find((entry) => store.selection.has(entry.key))!.key, size: 0, last_modified: null, e_tag: null, storage_class: null, content_type: null, metadata: [] }) : null; showSelect = !!objectDetail">S3 Select</button>
-           <button v-if="!isReadOnly" class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, false)">
-            复制
-          </button>
-           <button v-if="!isReadOnly" class="btn" :disabled="!store.selection.size" @click="openCopyDialog(null, true)">
-            移动
-          </button>
-           <button v-if="!isReadOnly"
-            class="btn danger"
-            :disabled="!store.selection.size"
-            @click="deleteSelection"
-          >
-            删除
-           </button>
+            <details v-if="store.selection.size" class="tools-menu selection-more">
+             <summary class="btn">已选操作…</summary>
+             <div class="tools-popover">
+               <button class="btn ghost" @click="downloadZipSelection">下载 ZIP</button>
+               <button class="btn ghost" @click="openPresign('get')">分享链接</button>
+               <button class="btn ghost" :disabled="store.selection.size !== 1" @click="objectDetail = store.browse.entries.find((entry) => store.selection.has(entry.key)) ? ({ key: store.browse.entries.find((entry) => store.selection.has(entry.key))!.key, size: 0, last_modified: null, e_tag: null, storage_class: null, content_type: null, metadata: [] }) : null; showSelect = !!objectDetail">S3 Select</button>
+               </div>
+             </details>
+            <details v-if="store.selection.size && !isReadOnly" class="tools-menu selection-more">
+              <summary class="btn">管理所选…</summary>
+              <div class="tools-popover">
+                <button class="btn ghost" @click="openCopyDialog(null, false)">复制</button>
+                <button class="btn ghost" @click="openCopyDialog(null, true)">移动</button>
+                <button class="btn ghost danger" @click="deleteSelection">删除</button>
+              </div>
+            </details>
            <span v-if="isReadOnly" class="selected-count">🔒 当前连接为只读模式</span>
-          <button class="btn ghost" @click="store.refresh()">刷新</button>
+           <button class="btn ghost" @click="store.refresh()">刷新</button>
         </div>
 
         <div v-if="store.browse.error" class="error-banner">
@@ -1014,7 +1038,9 @@ async function removeBucket() {
           @copy-key="copyKey"
           @download="(item) => requestDownload([item])"
           @del="(item) => requestDelete([item])"
-          @load-more="store.loadMore"
+           @load-more="store.loadMore"
+           @empty-upload="pickUpload(false)"
+           @empty-folder="showFolderDialog = true"
         />
       </template>
       </main>
@@ -1034,7 +1060,8 @@ async function removeBucket() {
       v-model="showUploadConfirm"
       title="确认上传"
       ok-text="开始上传"
-      @confirm="confirmUpload"
+       :busy="uploadBusy"
+       @confirm="confirmUpload"
     >
        <p v-if="uploadPlan">
          将上传 <b>{{ uploadPlan.files.length }}</b> 个文件到
@@ -1069,7 +1096,8 @@ async function removeBucket() {
       title="确认删除"
       ok-text="删除"
       danger
-      @confirm="confirmDelete"
+       :busy="deleteBusy"
+       @confirm="confirmDelete"
     >
       <p>
         即将删除 <b>{{ deleteCount }}</b> 个对象（含文件夹内的全部对象）。
@@ -1093,11 +1121,12 @@ async function removeBucket() {
       v-model="showConflict"
       :count="downloadItems.length"
       :dest="downloadDest"
+      :busy="downloadBusy"
       @change-dest="changeDownloadDirForTask"
       @choose="confirmDownload"
     />
 
-    <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" @save-text="savePreviewText" />
+    <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" :read-only="isReadOnly" @save-text="savePreviewText" @download="requestDownload([{ key: previewKey, is_dir: false }])" />
     <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" :read-only="isReadOnly" />
     <div v-if="showSelect" class="modal-mask"><div class="modal policy-modal"><div class="modal-head">S3 Select</div><div class="modal-body copy-form"><label>输入格式 <select v-model="selectFormat" class="select"><option value="csv">CSV（首行列名）</option><option value="json">JSON Lines</option></select></label><textarea v-model="selectExpression" class="input" /><p class="copy-hint">扫描量可能产生 S3 Select 费用，请确认查询范围与 SQL 条件。</p><button class="btn" @click="runSelect">执行查询</button><p v-if="selectResult" class="muted">扫描 {{ formatBytes(selectResult.bytes_scanned) }} · 处理 {{ formatBytes(selectResult.bytes_processed) }} · 返回 {{ formatBytes(selectResult.bytes_returned) }}</p><pre v-if="selectResult" class="policy-diff">{{ selectResult.records }}</pre></div><div class="modal-foot"><button class="btn" @click="showSelect = false">关闭</button><button class="btn" :disabled="!selectResult" @click="exportSelectResult(false)">导出 CSV</button><button class="btn primary" :disabled="!selectResult" @click="exportSelectResult(true)">导出 JSON</button></div></div></div>
     <SettingsDialog v-model="showSettings" />
@@ -1271,6 +1300,9 @@ async function removeBucket() {
 .bucket-manage { margin-left: auto; }
 .bucket-list .pad {
   padding: 4px 0;
+}
+.bucket-list .empty-actions {
+  margin-top: 10px;
 }
 .bucket-item {
   display: flex;

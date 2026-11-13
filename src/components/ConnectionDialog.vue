@@ -5,7 +5,8 @@ import type { ConnectionConfig } from "../types";
 import { blankConnection } from "../types";
 import { errorMessage, formatTime } from "../utils";
 import { toast } from "../store";
-import { useMaskClose } from "./useMaskClose";
+import { useMaskClose, useDialogFocus } from "./useMaskClose";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -35,6 +36,11 @@ const ssoDevice = ref<{ verification_uri: string; verification_uri_complete: str
 const ssoAccounts = ref<{ id: string; name: string }[]>([]);
 const ssoRoles = ref<{ name: string }[]>([]);
 const ssoTokenExpiry = ref<number | null>(null);
+const testedSnapshot = ref("");
+
+function connectionTestSnapshot(): string {
+  return [form.endpoint_url, form.region, form.access_key, form.secret_key, form.default_bucket, form.force_path_style, form.ca_cert_path].join("\u0000");
+}
 
 watch(
   () => props.modelValue,
@@ -51,6 +57,7 @@ watch(
     testMsg.value = lt
       ? `上次测试（${formatTime(new Date(lt.at * 1000).toISOString())}）：${lt.msg}`
       : "";
+    testedSnapshot.value = connectionTestSnapshot();
     saveError.value = "";
     confirmDelete.value = false;
     assumeRoleExpiry.value = null;
@@ -94,15 +101,31 @@ async function testConnection() {
     testOk.value = true;
     testMsg.value = "连接成功";
     form.last_test = { ok: true, msg: "连接成功", at: nowSec() };
+    testedSnapshot.value = connectionTestSnapshot();
   } catch (e) {
     testOk.value = false;
     const msg = errorMessage(e);
     testMsg.value = msg;
     form.last_test = { ok: false, msg, at: nowSec() };
+    testedSnapshot.value = connectionTestSnapshot();
   } finally {
     testing.value = false;
   }
 }
+async function chooseCaCert() {
+  const path = await openDialog({ title: "选择 CA 证书", filters: [{ name: "PEM 证书", extensions: ["pem", "crt", "cer"] }] });
+  if (typeof path === "string") form.ca_cert_path = path;
+}
+
+watch(
+  () => [form.endpoint_url, form.region, form.access_key, form.secret_key, form.default_bucket, form.force_path_style, form.ca_cert_path],
+  () => {
+    if (!testMsg.value || connectionTestSnapshot() === testedSnapshot.value) return;
+    testMsg.value = "配置已变更，请重新测试连接";
+    testOk.value = false;
+    form.last_test = null;
+  },
+);
 async function testAssumeRole() {
   const roleArn = form.role_arn?.trim();
   if (!roleArn) { testOk.value = false; testMsg.value = "请先填写 Role ARN"; return; }
@@ -172,16 +195,19 @@ function close() {
 }
 
 const { onMousedown, onClick } = useMaskClose(close);
+const { root, onKeydown } = useDialogFocus(() => props.modelValue, close);
+watch(() => props.modelValue, (open) => { if (open) requestAnimationFrame(() => root.value?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus()); });
 </script>
 
 <template>
   <div v-if="modelValue" class="modal-mask" @mousedown="onMousedown" @click="onClick">
-    <div class="modal connection-modal">
+    <div ref="root" class="modal connection-modal" @keydown="onKeydown">
       <div class="modal-head">
         {{ isEdit ? "编辑连接" : "新建连接" }}
       </div>
       <div class="modal-body">
         <div class="form-row">
+          <div class="form-section-title">基础连接</div>
           <label>名称 *</label>
           <input v-model="form.name" class="input" placeholder="如：生产环境 S3" />
         </div>
@@ -212,6 +238,7 @@ const { onMousedown, onClick } = useMaskClose(close);
           留空则进入桶列表；填写后直接进入该桶（适合 AK 无 ListBuckets 权限的账号）。
         </div>
         <div class="form-row">
+          <div class="form-section-title">凭据与安全</div>
           <label>Access Key *</label>
           <input v-model="form.access_key" class="input" autocomplete="off" />
         </div>
@@ -252,10 +279,12 @@ const { onMousedown, onClick } = useMaskClose(close);
             placeholder="/path/to/ca.pem"
             autocomplete="off"
           />
+          <button class="btn sm" type="button" @click="chooseCaCert">选择文件…</button>
           <div class="form-hint">
             服务使用自签名 HTTPS 证书时填写其 CA 证书（PEM）文件路径；留空使用系统证书。
           </div>
         </div>
+        <div class="form-section-title">高级认证与管理</div>
         <div class="form-row"><label>Role ARN（可选）</label><input v-model="form.role_arn" class="input" placeholder="arn:aws:iam::123456789012:role/RoleName" /></div>
         <div class="form-row"><label>External ID（可选）</label><input v-model="form.external_id" class="input" placeholder="第三方信任策略要求时填写" /></div>
         <div v-if="form.role_arn && assumeRoleExpiry" class="form-hint">临时凭据到期：{{ formatTime(new Date(assumeRoleExpiry * 1000).toISOString()) }}<span v-if="assumeRoleExpiry * 1000 <= Date.now()">（已过期，请重新激活）</span></div>
@@ -307,6 +336,13 @@ const { onMousedown, onClick } = useMaskClose(close);
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+.form-section-title {
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
 }
 .secret-row {
   display: flex;

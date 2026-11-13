@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, reactive } from "vue";
 import {
   cancelTask,
   clearFinished,
@@ -31,7 +31,7 @@ const statusLabel: Record<TaskInfo["status"], string> = {
 };
 
 const runningCount = computed(
-  () => tasksStore.tasks.filter((t) => t.status === "running").length,
+  () => tasksStore.tasks.filter((t) => t.status === "running" || t.status === "queued").length,
 );
 const hasFinished = computed(() =>
   tasksStore.tasks.some((t) => t.status !== "running" && t.status !== "queued"),
@@ -94,6 +94,20 @@ const speeds = computed(() => {
   for (const t of tasksStore.tasks) m.set(t.id, sampleSpeed(t));
   return m;
 });
+
+function taskSummary(t: TaskInfo): string {
+  const count = `${t.files_total} 个对象`;
+  if (t.current_file) return `${count} · 当前：${t.current_file}`;
+  if (t.kind === "search") return `${count} · 正在扫描对象`;
+  if (t.kind === "stats") return `${count} · 正在统计用量`;
+  return count;
+}
+
+const expandedFailures = reactive(new Set<string>());
+function toggleFailures(id: string) {
+  if (expandedFailures.has(id)) expandedFailures.delete(id);
+  else expandedFailures.add(id);
+}
 </script>
 
 <template>
@@ -160,6 +174,9 @@ const speeds = computed(() => {
           </button>
         </div>
         <div class="task-line stats muted">
+          <span>{{ taskSummary(t) }}</span>
+        </div>
+        <div class="task-line stats muted">
           <span>{{ fileStats(t) }}</span>
           <span>· {{ progressText(t) }}</span>
           <span v-if="speeds.get(t.id) != null" class="speed">
@@ -182,16 +199,16 @@ const speeds = computed(() => {
           {{ t.current_file }}
         </div>
         <div v-if="t.failures.length" class="failures">
+          <button class="failure-toggle" @click="toggleFailures(t.id)">
+            {{ expandedFailures.has(t.id) ? "收起失败项" : `查看全部失败项（${t.failures.length}）` }}
+          </button>
           <div
-            v-for="f in t.failures.slice(0, 3)"
+            v-for="f in (expandedFailures.has(t.id) ? t.failures : t.failures.slice(0, 3))"
             :key="f.key"
             class="task-line failure"
           >
             <span class="fkey" :title="f.key">{{ f.key }}</span>
             <span class="ferr" :title="f.error">{{ f.error }}</span>
-          </div>
-          <div v-if="t.failures.length > 3" class="muted more">
-            …等 {{ t.failures.length }} 个失败项
           </div>
         </div>
       </div>
@@ -336,6 +353,15 @@ const speeds = computed(() => {
   font-size: 12px;
   color: var(--danger);
   gap: 6px;
+}
+.failure-toggle {
+  border: 0;
+  padding: 0;
+  margin-bottom: 4px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
 }
 .fkey {
   max-width: 45%;

@@ -9,11 +9,13 @@ const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
 const { onMousedown, onClick } = useMaskClose(() => emit("update:modelValue", false));
 const props = defineProps<{ modelValue: boolean; detail: ObjectDetail | null; bucket: string; readOnly?: boolean }>();
 const versions = ref<ObjectVersionInfo[]>([]);
+const visibleVersionCount = ref(20);
 const versionsLoading = ref(false);
 const versionsError = ref("");
 const tags = ref<ObjectTag[]>([]);
 const acl = ref<ObjectAclInfo | null>(null);
-const accessError = ref("");
+const tagsError = ref("");
+const aclError = ref("");
 const accessLoaded = ref(false);
 const editingMetadata = ref(false);
 const editContentType = ref("");
@@ -22,7 +24,7 @@ const restoreDays = ref(7);
 const restoreTier = ref("Standard");
 
 watch(() => [props.modelValue, props.detail?.key] as const, ([open]) => {
-  if (!open) { versions.value = []; versionsError.value = ""; }
+  if (!open) { versions.value = []; versionsError.value = ""; visibleVersionCount.value = 20; }
 });
 
 async function loadVersions() {
@@ -42,18 +44,18 @@ async function restore(version: ObjectVersionInfo) {
 
 async function loadAccess() {
   if (!props.detail) return;
-  accessError.value = ""; accessLoaded.value = true;
+  tagsError.value = ""; aclError.value = ""; accessLoaded.value = true;
   try { tags.value = await api.objectTags(props.bucket, props.detail.key); }
-  catch (e) { accessError.value = `标签：${e instanceof Error ? e.message : String(e)}`; }
+  catch (e) { tagsError.value = e instanceof Error ? e.message : String(e); }
   try { acl.value = await api.objectAcl(props.bucket, props.detail.key); }
-  catch (e) { accessError.value += `${accessError.value ? "；" : ""}ACL：${e instanceof Error ? e.message : String(e)}`; }
+  catch (e) { aclError.value = e instanceof Error ? e.message : String(e); }
 }
 function addTag() { tags.value.push({ key: "", value: "" }); }
 function removeTag(index: number) { tags.value.splice(index, 1); }
 async function saveTags() {
   if (!props.detail) return;
   try { await api.saveObjectTags(props.bucket, props.detail.key, tags.value); await loadAccess(); }
-  catch (e) { accessError.value = e instanceof Error ? e.message : String(e); }
+  catch (e) { tagsError.value = e instanceof Error ? e.message : String(e); }
 }
 function beginMetadataEdit() { if (!props.detail) return; editContentType.value = props.detail.content_type || "application/octet-stream"; editMetadata.value = props.detail.metadata.map((item) => ({ key: item.key, value: item.value })); editingMetadata.value = true; }
 async function saveMetadata() { if (!props.detail) return; try { await api.replaceObjectMetadata(props.bucket, props.detail.key, editContentType.value, editMetadata.value); editingMetadata.value = false; emit("update:modelValue", false); } catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); } }
@@ -89,20 +91,25 @@ async function restoreArchive() { if (!props.detail || !confirm("将发起归档
         <div class="meta-title version-head"><span>版本</span><button class="btn sm" :disabled="versionsLoading" @click="loadVersions">{{ versionsLoading ? "加载中…" : "查看版本" }}</button></div>
         <div v-if="versionsError" class="version-error">{{ versionsError }}</div>
         <div v-if="versions.length" class="versions">
-          <div v-for="version in versions" :key="version.version_id" class="version-row">
+           <div v-for="version in versions.slice(0, visibleVersionCount)" :key="version.version_id" class="version-row">
             <span>{{ version.is_delete_marker ? "删除标记" : formatBytes(version.size) }}</span>
             <span>{{ formatTime(version.last_modified) }}</span>
             <span :title="version.version_id">{{ version.is_latest ? "当前版本" : version.version_id }}</span>
             <button v-if="!version.is_delete_marker && !version.is_latest" class="btn sm" @click="restore(version)">恢复</button>
-          </div>
-        </div>
+           </div>
+           <button v-if="visibleVersionCount < versions.length" class="btn sm" @click="visibleVersionCount += 20">加载更多版本</button>
+         </div>
         <div class="meta-title version-head"><span>标签与访问控制</span><button class="btn sm" @click="loadAccess">查看</button></div>
-        <div v-if="accessError" class="version-error">{{ accessError }}</div>
-        <div v-if="accessLoaded" class="access-panel">
-          <div v-for="(tag, index) in tags" :key="index" class="tag-row"><input v-model="tag.key" class="input" placeholder="标签名" /><input v-model="tag.value" class="input" placeholder="标签值" /><button class="btn sm" @click="removeTag(index)">删除</button></div>
-          <div v-if="!readOnly" class="tag-actions"><button class="btn sm" @click="addTag">新增标签</button><button class="btn sm primary" @click="saveTags">保存标签</button></div>
+         <div v-if="tagsError" class="version-error">标签读取失败：{{ tagsError }}</div>
+         <div v-if="aclError" class="version-error">ACL 读取失败：{{ aclError }}</div>
+         <div v-if="accessLoaded" class="access-panel">
+           <div v-for="(tag, index) in tags" :key="index" class="tag-row">
+             <template v-if="!readOnly"><input v-model="tag.key" class="input" placeholder="标签名" /><input v-model="tag.value" class="input" placeholder="标签值" /><button class="btn sm" @click="removeTag(index)">删除</button></template>
+             <template v-else><span>{{ tag.key }}</span><span class="muted">{{ tag.value }}</span></template>
+           </div>
+           <div v-if="!readOnly" class="tag-actions"><button class="btn sm" @click="addTag">新增标签</button><button class="btn sm primary" @click="saveTags">保存标签</button></div>
           <div v-if="acl" class="acl"><b>ACL（只读）</b><div>所有者：{{ acl.owner || "—" }}</div><div v-for="grant in acl.grants" :key="grant">{{ grant }}</div></div>
-        </div>
+         </div>
       </div>
       <div class="modal-foot"><button class="btn primary" @click="emit('update:modelValue', false)">关闭</button></div>
     </div>

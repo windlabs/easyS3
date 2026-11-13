@@ -28,12 +28,15 @@ const emit = defineEmits<{
   download: [item: FsItem];
   del: [item: FsItem];
   loadMore: [];
+  emptyUpload: [];
+  emptyFolder: [];
 }>();
 
 type SortKey = "name" | "size" | "time" | "storage";
 const sortKey = ref<SortKey>("name");
 const sortAsc = ref(true);
 const showStorage = ref(localStorage.getItem("easys3.show-storage-column") !== "false");
+const openMore = ref<string | null>(null);
 
 function toggleStorageColumn() {
   showStorage.value = !showStorage.value;
@@ -117,7 +120,7 @@ function onScroll() {
       <div class="muted">{{ e.is_dir ? "文件夹" : formatBytes(e.size) }}</div>
     </div>
   </div>
-  <div ref="wrap" class="table-wrap" @scroll.passive="onScroll">
+  <div v-else ref="wrap" class="table-wrap" @scroll.passive="onScroll">
     <table class="obj-table">
       <thead>
         <tr>
@@ -141,7 +144,13 @@ function onScroll() {
       </thead>
       <tbody>
         <tr v-if="!sorted.length && !loading">
-          <td :colspan="showStorage ? 6 : 5" class="empty-cell muted">当前目录为空</td>
+          <td :colspan="showStorage ? 6 : 5" class="empty-cell muted">
+            <div>当前目录为空</div>
+            <div class="empty-actions">
+              <button v-if="!readOnly" class="btn primary sm" @click="emit('emptyUpload')">上传文件</button>
+              <button v-if="!readOnly" class="btn sm" @click="emit('emptyFolder')">新建文件夹</button>
+            </div>
+          </td>
         </tr>
         <tr v-if="virtualStart" class="virtual-spacer"><td :colspan="showStorage ? 6 : 5" :style="{ height: (virtualStart * rowHeight) + 'px' }" /></tr>
         <tr
@@ -169,13 +178,16 @@ function onScroll() {
           <td v-if="showStorage" class="col-storage muted">{{ e.is_dir ? "—" : (e.storage_class || "STANDARD") }}</td>
           <td class="col-actions">
             <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('preview', e)">预览</button>
-            <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('detail', e)">详情</button>
             <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('openFile', e)">打开</button>
-            <button v-if="!props.readOnly && !e.is_dir" class="btn sm ghost" @click="emit('copy', e, false)">复制</button>
-            <button v-if="!props.readOnly && !e.is_dir" class="btn sm ghost" @click="emit('copy', e, true)">移动/改名</button>
             <button class="btn sm ghost" @click="emit('copyKey', e)">复制Key</button>
             <button class="btn sm ghost" @click="emit('download', asItem(e))">下载</button>
-            <button v-if="!props.readOnly" class="btn sm ghost danger" @click="emit('del', asItem(e))">删除</button>
+            <button class="btn sm ghost" @click="openMore = openMore === e.key ? null : e.key">更多</button>
+            <template v-if="openMore === e.key">
+              <button v-if="!e.is_dir" class="btn sm ghost" @click="emit('detail', e); openMore = null">详情</button>
+              <button v-if="!props.readOnly && !e.is_dir" class="btn sm ghost" @click="emit('copy', e, false); openMore = null">复制</button>
+              <button v-if="!props.readOnly && !e.is_dir" class="btn sm ghost" @click="emit('copy', e, true); openMore = null">移动/改名</button>
+              <button v-if="!props.readOnly" class="btn sm ghost danger" @click="emit('del', asItem(e)); openMore = null">删除</button>
+            </template>
           </td>
         </tr>
         <tr v-if="sorted.length > virtualEnd" class="virtual-spacer"><td :colspan="showStorage ? 6 : 5" :style="{ height: ((sorted.length - virtualEnd) * rowHeight) + 'px' }" /></tr>
@@ -275,6 +287,7 @@ function onScroll() {
   text-align: center;
   padding: 40px 0;
 }
+.empty-actions { display: flex; justify-content: center; gap: 8px; margin-top: 12px; }
 .table-foot {
   text-align: center;
   padding: 10px 0;

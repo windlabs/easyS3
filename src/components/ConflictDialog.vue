@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import type { ConflictPolicy } from "../types";
-import { useMaskClose } from "./useMaskClose";
+import { useMaskClose, useDialogFocus } from "./useMaskClose";
 
-defineProps<{ modelValue: boolean; count: number; dest?: string }>();
+const props = defineProps<{ modelValue: boolean; count: number; dest?: string; busy?: boolean }>();
 
 const emit = defineEmits<{
   "update:modelValue": [v: boolean];
@@ -14,9 +14,15 @@ const emit = defineEmits<{
 const { onMousedown, onClick } = useMaskClose(() =>
   emit("update:modelValue", false),
 );
+const { root, onKeydown } = useDialogFocus(() => props.modelValue, () => emit("update:modelValue", false));
+watch(() => props.modelValue, (open) => { if (open) requestAnimationFrame(() => root.value?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus()); });
 
 // 默认选安全的“保留两者”（规格：三选一；不指定默认值，此为推荐项）
 const policy = ref<ConflictPolicy>("rename");
+
+watch(() => props.modelValue, (open) => {
+  if (open) policy.value = "rename";
+});
 
 function setPolicy(p: ConflictPolicy) {
   policy.value = p;
@@ -25,7 +31,7 @@ function setPolicy(p: ConflictPolicy) {
 
 <template>
   <div v-if="modelValue" class="modal-mask" @mousedown="onMousedown" @click="onClick">
-    <div class="modal">
+    <div ref="root" class="modal" @keydown="onKeydown">
       <div class="modal-head">同名文件处理方式</div>
       <div class="modal-body">
         <p class="muted">
@@ -34,6 +40,7 @@ function setPolicy(p: ConflictPolicy) {
         <p v-if="dest" class="muted" :title="dest">保存到：{{ dest }}</p>
         <label class="radio-row">
           <input
+            :disabled="busy"
             type="radio"
             :checked="policy === 'overwrite'"
             @change="setPolicy('overwrite')"
@@ -42,6 +49,7 @@ function setPolicy(p: ConflictPolicy) {
         </label>
         <label class="radio-row">
           <input
+            :disabled="busy"
             type="radio"
             :checked="policy === 'rename'"
             @change="setPolicy('rename')"
@@ -50,6 +58,7 @@ function setPolicy(p: ConflictPolicy) {
         </label>
         <label class="radio-row">
           <input
+            :disabled="busy"
             type="radio"
             :checked="policy === 'skip'"
             @change="setPolicy('skip')"
@@ -58,10 +67,10 @@ function setPolicy(p: ConflictPolicy) {
         </label>
       </div>
       <div class="modal-foot">
-        <button class="btn" @click="emit('change-dest')">更换目录</button>
-        <button class="btn" @click="emit('update:modelValue', false)">取消</button>
-        <button class="btn primary" @click="emit('choose', policy)">
-          开始下载
+        <button class="btn" :disabled="busy" @click="emit('change-dest')">更换目录</button>
+        <button class="btn" :disabled="busy" @click="emit('update:modelValue', false)">取消</button>
+        <button class="btn primary" :disabled="busy" @click="emit('choose', policy)">
+          {{ busy ? "处理中…" : "开始下载" }}
         </button>
       </div>
     </div>

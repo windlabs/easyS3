@@ -7,9 +7,10 @@ const props = defineProps<{
   modelValue: boolean;
   name: string;
   data: PreviewData | null;
+  readOnly?: boolean;
 }>();
 
-const emit = defineEmits<{ "update:modelValue": [v: boolean]; saveText: [content: string] }>();
+const emit = defineEmits<{ "update:modelValue": [v: boolean]; saveText: [content: string]; download: [] }>();
 const editMode = ref(false);
 const editContent = ref("");
 const textEditable = computed(() => props.data?.kind === "text" && props.data.content.length <= 1024 * 1024);
@@ -158,7 +159,8 @@ const mdBlocks = computed(() =>
     <div class="modal preview-modal">
       <div class="modal-head preview-head">
         <span class="name" :title="name">{{ name }}</span>
-        <button v-if="textEditable" class="btn ghost sm" @click="editMode = !editMode">{{ editMode ? "预览" : "编辑" }}</button>
+         <button v-if="textEditable && !readOnly" class="btn ghost sm" @click="editMode = !editMode">{{ editMode ? "预览" : "编辑" }}</button>
+         <button class="btn ghost sm" @click="emit('download')">下载</button>
         <button class="btn ghost sm" @click="emit('update:modelValue', false)">
           关闭
         </button>
