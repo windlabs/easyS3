@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive } from "vue";
+import { computed, reactive, watch } from "vue";
 import {
   cancelTask,
   clearFinished,
@@ -97,13 +97,15 @@ const speeds = computed(() => {
 
 function taskSummary(t: TaskInfo): string {
   const count = `${t.files_total} 个对象`;
-  if (t.current_file) return `${count} · 当前：${t.current_file}`;
   if (t.kind === "search") return `${count} · 正在扫描对象`;
   if (t.kind === "stats") return `${count} · 正在统计用量`;
   return count;
 }
 
 const expandedFailures = reactive(new Set<string>());
+watch(() => tasksStore.tasks.map((task) => task.id), (ids) => {
+  for (const id of expandedFailures) if (!ids.includes(id)) expandedFailures.delete(id);
+});
 function toggleFailures(id: string) {
   if (expandedFailures.has(id)) expandedFailures.delete(id);
   else expandedFailures.add(id);
@@ -118,7 +120,7 @@ function toggleFailures(id: string) {
     @mouseleave="setTasksHover(false)"
   >
     <div class="task-head" @click="tasksStore.open = !tasksStore.open">
-      <span class="title">传输任务</span>
+      <span class="title">任务中心</span>
       <span v-if="runningCount" class="badge">{{ runningCount }}</span>
       <span class="spacer" />
       <button

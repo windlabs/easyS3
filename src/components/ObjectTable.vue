@@ -7,16 +7,17 @@ import { selection } from "../store";
 
 const props = defineProps<{ entries: Entry[]; loading: boolean; hasMore: boolean; grid?: boolean; bucket?: string; readOnly?: boolean }>();
 const thumbnails = ref<Record<string, string>>({});
+const thumbnailFailed = ref<Record<string, boolean>>({});
 const pending = new Set<string>();
 function imageKey(name: string) { return /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name); }
 async function loadThumbnail(entry: Entry) {
   if (!props.bucket || !imageKey(entry.name) || thumbnails.value[entry.key] || pending.has(entry.key)) return;
   pending.add(entry.key);
   try { const data = await api.thumbnailObject(props.bucket, entry.key); if (data.kind === "image") thumbnails.value[entry.key] = `data:${data.mime};base64,${data.data_base64}`; }
-  catch { thumbnails.value[entry.key] = ""; }
+  catch { thumbnailFailed.value[entry.key] = true; }
   finally { pending.delete(entry.key); }
 }
-watch(() => props.entries, () => { thumbnails.value = {}; pending.clear(); });
+watch(() => props.entries, () => { thumbnails.value = {}; thumbnailFailed.value = {}; pending.clear(); });
 
 const emit = defineEmits<{
   open: [entry: Entry];
@@ -33,8 +34,9 @@ const emit = defineEmits<{
 }>();
 
 type SortKey = "name" | "size" | "time" | "storage";
-const sortKey = ref<SortKey>("name");
-const sortAsc = ref(true);
+const savedSort = JSON.parse(localStorage.getItem("easys3.object-sort") || "null") as { key?: SortKey; asc?: boolean } | null;
+const sortKey = ref<SortKey>(savedSort?.key ?? "name");
+const sortAsc = ref(savedSort?.asc ?? true);
 const showStorage = ref(localStorage.getItem("easys3.show-storage-column") !== "false");
 const openMore = ref<string | null>(null);
 
@@ -50,6 +52,7 @@ function setSort(k: SortKey) {
     sortKey.value = k;
     sortAsc.value = true;
   }
+  localStorage.setItem("easys3.object-sort", JSON.stringify({ key: sortKey.value, asc: sortAsc.value }));
 }
 
 // 文件夹始终在前（规格默认：名称升序、文件夹在前），组内按所选列排序
@@ -114,11 +117,16 @@ function onScroll() {
 
 <template>
   <div v-if="grid" class="grid-wrap">
+    <div v-if="loading && !sorted.length" class="grid-state muted">加载中…</div>
+    <div v-else-if="!sorted.length" class="grid-state muted"><div>当前目录为空</div><div class="empty-actions"><button v-if="!readOnly" class="btn primary sm" @click="emit('emptyUpload')">上传文件</button><button v-if="!readOnly" class="btn sm" @click="emit('emptyFolder')">新建文件夹</button></div></div>
     <div v-for="e in sorted" :key="e.key" class="grid-item" :class="{ selected: selection.has(e.key) }" @click="toggle(e)">
-      <div class="grid-thumb"><img v-if="thumbnails[e.key]" :src="thumbnails[e.key]" /><button v-else-if="!e.is_dir && imageKey(e.name)" class="thumb-load" @click.stop="loadThumbnail(e)">加载缩略图</button><span v-else>{{ e.is_dir ? "📁" : "📄" }}</span></div>
-      <div class="grid-name" :title="e.name">{{ e.name }}</div>
-      <div class="muted">{{ e.is_dir ? "文件夹" : formatBytes(e.size) }}</div>
+      <div class="grid-thumb" @dblclick.stop="e.is_dir ? emit('open', e) : emit('preview', e)"><img v-if="thumbnails[e.key]" :src="thumbnails[e.key]" /><button v-else-if="!e.is_dir && imageKey(e.name)" class="thumb-load" @click.stop="loadThumbnail(e)">{{ thumbnailFailed[e.key] ? "加载失败，重试" : "加载缩略图" }}</button><span v-else>{{ e.is_dir ? "📁" : "📄" }}</span></div>
+      <div class="grid-name" :title="e.name" @dblclick.stop="e.is_dir ? emit('open', e) : emit('preview', e)">{{ e.name }}</div>
+      <div class="grid-meta"><span class="muted">{{ e.is_dir ? "文件夹" : formatBytes(e.size) }}</span><input type="checkbox" :checked="selection.has(e.key)" @click.stop @change="toggle(e)" /></div>
+      <div class="grid-actions"><button v-if="!e.is_dir" class="btn sm ghost" @click.stop="emit('preview', e)">预览</button><button class="btn sm ghost" @click.stop="emit('download', asItem(e))">下载</button><button class="btn sm ghost" @click.stop="emit('copyKey', e)">复制 Key</button><button class="btn sm ghost" @click.stop="openMore = openMore === e.key ? null : e.key">更多</button></div>
+      <div v-if="openMore === e.key" class="grid-more"><button v-if="!e.is_dir" class="btn sm ghost" @click.stop="emit('detail', e); openMore = null">详情</button><button v-if="!readOnly && !e.is_dir" class="btn sm ghost" @click.stop="emit('copy', e, false); openMore = null">复制</button><button v-if="!readOnly && !e.is_dir" class="btn sm ghost" @click.stop="emit('copy', e, true); openMore = null">移动/改名</button><button v-if="!readOnly" class="btn sm ghost danger" @click.stop="emit('del', asItem(e)); openMore = null">删除</button></div>
     </div>
+    <div v-if="loading && sorted.length" class="grid-state muted">加载中…</div><button v-else-if="hasMore" class="grid-state load-more btn ghost" @click="emit('loadMore')">加载更多</button>
   </div>
   <div v-else ref="wrap" class="table-wrap" @scroll.passive="onScroll">
     <table class="obj-table">
@@ -143,7 +151,8 @@ function onScroll() {
         </tr>
       </thead>
       <tbody>
-        <tr v-if="!sorted.length && !loading">
+        <tr v-if="!sorted.length && loading"><td :colspan="showStorage ? 6 : 5" class="empty-cell muted">加载中…</td></tr>
+        <tr v-else-if="!sorted.length && !loading">
           <td :colspan="showStorage ? 6 : 5" class="empty-cell muted">
             <div>当前目录为空</div>
             <div class="empty-actions">
@@ -300,5 +309,10 @@ function onScroll() {
 .grid-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .thumb-load { border: 0; background: transparent; color: var(--primary); cursor: pointer; }
 .grid-name { margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid-meta, .grid-actions { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 6px; }
+.grid-actions { justify-content: flex-start; }
+.grid-more { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.grid-state { grid-column: 1 / -1; text-align: center; padding: 36px 0; }
+.load-more { width: 100%; }
 .column-toggle { margin: 6px 10px; }
 </style>

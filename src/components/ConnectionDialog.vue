@@ -30,6 +30,7 @@ const testOk = ref(false);
 const testMsg = ref("");
 const saving = ref(false);
 const saveError = ref("");
+const fieldError = ref("");
 const confirmDelete = ref(false);
 const assumeRoleExpiry = ref<number | null>(null);
 const ssoDevice = ref<{ verification_uri: string; verification_uri_complete: string | null; user_code: string; expires_in: number } | null>(null);
@@ -59,6 +60,7 @@ watch(
       : "";
     testedSnapshot.value = connectionTestSnapshot();
     saveError.value = "";
+    fieldError.value = "";
     confirmDelete.value = false;
     assumeRoleExpiry.value = null;
     ssoDevice.value = null;
@@ -159,6 +161,12 @@ async function loadSsoAccounts() { try { ssoAccounts.value = await api.listSsoAc
 async function loadSsoRoles() { if (!form.sso_account_id) return; try { ssoRoles.value = await api.listSsoRoles(form.sso_account_id); } catch (e) { testMsg.value = errorMessage(e); } }
 
 async function save() {
+  if (!form.name.trim()) { fieldError.value = "名称不能为空"; return; }
+  if (!/^https?:\/\//i.test(form.endpoint_url.trim())) { fieldError.value = "Endpoint 必须以 http:// 或 https:// 开头"; return; }
+  if (!form.region.trim()) { fieldError.value = "Region 不能为空"; return; }
+  if (!form.access_key.trim() || (!isEdit.value && !form.secret_key.trim())) { fieldError.value = "Access Key 和 Secret Key 不能为空"; return; }
+  if (form.default_bucket && !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(form.default_bucket.trim())) { fieldError.value = "限定桶名称格式不正确"; return; }
+  fieldError.value = "";
   saving.value = true;
   saveError.value = "";
   try {
@@ -284,7 +292,7 @@ watch(() => props.modelValue, (open) => { if (open) requestAnimationFrame(() => 
             服务使用自签名 HTTPS 证书时填写其 CA 证书（PEM）文件路径；留空使用系统证书。
           </div>
         </div>
-        <div class="form-section-title">高级认证与管理</div>
+        <details class="advanced-settings"><summary class="form-section-title">高级认证与管理</summary>
         <div class="form-row"><label>Role ARN（可选）</label><input v-model="form.role_arn" class="input" placeholder="arn:aws:iam::123456789012:role/RoleName" /></div>
         <div class="form-row"><label>External ID（可选）</label><input v-model="form.external_id" class="input" placeholder="第三方信任策略要求时填写" /></div>
         <div v-if="form.role_arn && assumeRoleExpiry" class="form-hint">临时凭据到期：{{ formatTime(new Date(assumeRoleExpiry * 1000).toISOString()) }}<span v-if="assumeRoleExpiry * 1000 <= Date.now()">（已过期，请重新激活）</span></div>
@@ -293,10 +301,11 @@ watch(() => props.modelValue, (open) => { if (open) requestAnimationFrame(() => 
         <div class="form-row"><label>SSO Region（可选）</label><input v-model="form.sso_region" class="input" placeholder="例如 us-east-1" /></div>
         <div class="form-row"><label>SSO Account ID（可选）</label><input v-model="form.sso_account_id" class="input" placeholder="12 位 AWS 账户 ID" /></div>
         <div class="form-row"><label>SSO Role Name（可选）</label><input v-model="form.sso_role_name" class="input" placeholder="例如 AdministratorAccess" /></div>
-        <div v-if="form.sso_start_url" class="form-row"><button class="btn sm" :disabled="testing" @click="loadSsoAccounts">读取 SSO 账户</button><select v-if="ssoAccounts.length" v-model="form.sso_account_id" class="select" @change="loadSsoRoles"><option v-for="account in ssoAccounts" :key="account.id" :value="account.id">{{ account.name }} ({{ account.id }})</option></select><select v-if="ssoRoles.length" v-model="form.sso_role_name" class="select"><option v-for="role in ssoRoles" :key="role.name" :value="role.name">{{ role.name }}</option></select></div>
+        <div v-if="form.sso_start_url" class="form-row"><button class="btn sm" :disabled="testing" @click="loadSsoAccounts">读取 SSO 账户</button><select v-if="ssoAccounts.length" v-model="form.sso_account_id" class="select" @change="loadSsoRoles"><option v-for="account in ssoAccounts" :key="account.id" :value="account.id">{{ account.name }} ({{ account.id }})</option></select><select v-if="ssoRoles.length" v-model="form.sso_role_name" class="select"><option v-for="role in ssoRoles" :key="role.name" :value="role.name">{{ role.name }}</option></select></div></details>
         <div v-if="ssoDevice" class="form-hint">请访问：{{ ssoDevice.verification_uri_complete || ssoDevice.verification_uri }}<br />设备码：<b>{{ ssoDevice.user_code }}</b>（{{ ssoDevice.expires_in }} 秒内有效）</div>
         <div v-if="ssoTokenExpiry" class="form-hint">SSO token 到期：{{ formatTime(new Date(ssoTokenExpiry * 1000).toISOString()) }}<span v-if="ssoTokenExpiry * 1000 <= Date.now()">（已过期，请重新开始 SSO 授权）</span></div>
-        <div v-if="saveError" class="form-error">{{ saveError }}</div>
+         <div v-if="fieldError" class="form-error">{{ fieldError }}</div>
+         <div v-if="saveError" class="form-error">{{ saveError }}</div>
       </div>
       <div class="modal-foot">
         <button

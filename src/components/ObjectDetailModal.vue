@@ -5,7 +5,7 @@ import type { ObjectAclInfo, ObjectDetail, ObjectTag, ObjectVersionInfo } from "
 import { formatBytes, formatTime } from "../utils";
 import { useMaskClose } from "./useMaskClose";
 
-const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
+const emit = defineEmits<{ "update:modelValue": [value: boolean]; updated: [detail: ObjectDetail] }>();
 const { onMousedown, onClick } = useMaskClose(() => emit("update:modelValue", false));
 const props = defineProps<{ modelValue: boolean; detail: ObjectDetail | null; bucket: string; readOnly?: boolean }>();
 const versions = ref<ObjectVersionInfo[]>([]);
@@ -16,6 +16,10 @@ const tags = ref<ObjectTag[]>([]);
 const acl = ref<ObjectAclInfo | null>(null);
 const tagsError = ref("");
 const aclError = ref("");
+const metadataError = ref("");
+const savingTags = ref(false);
+const savingMetadata = ref(false);
+const restoreMessage = ref("");
 const accessLoaded = ref(false);
 const editingMetadata = ref(false);
 const editContentType = ref("");
@@ -24,7 +28,7 @@ const restoreDays = ref(7);
 const restoreTier = ref("Standard");
 
 watch(() => [props.modelValue, props.detail?.key] as const, ([open]) => {
-  if (!open) { versions.value = []; versionsError.value = ""; visibleVersionCount.value = 20; }
+  if (!open) { versions.value = []; versionsError.value = ""; metadataError.value = ""; restoreMessage.value = ""; visibleVersionCount.value = 20; tags.value = []; acl.value = null; accessLoaded.value = false; }
 });
 
 async function loadVersions() {
@@ -36,9 +40,9 @@ async function loadVersions() {
 }
 
 async function restore(version: ObjectVersionInfo) {
-  if (!props.detail || version.is_delete_marker) return;
+  if (!props.detail || props.readOnly || version.is_delete_marker) return;
   if (!confirm(`将恢复此历史版本为当前对象，是否继续？`)) return;
-  try { await api.restoreObjectVersion(props.bucket, props.detail.key, version.version_id); await loadVersions(); }
+  try { await api.restoreObjectVersion(props.bucket, props.detail.key, version.version_id); await loadVersions(); emit("updated", await api.objectDetail(props.bucket, props.detail.key)); }
   catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); }
 }
 
@@ -54,13 +58,16 @@ function addTag() { tags.value.push({ key: "", value: "" }); }
 function removeTag(index: number) { tags.value.splice(index, 1); }
 async function saveTags() {
   if (!props.detail) return;
+  if (savingTags.value) return;
+  savingTags.value = true;
   try { await api.saveObjectTags(props.bucket, props.detail.key, tags.value); await loadAccess(); }
   catch (e) { tagsError.value = e instanceof Error ? e.message : String(e); }
+  finally { savingTags.value = false; }
 }
 function beginMetadataEdit() { if (!props.detail) return; editContentType.value = props.detail.content_type || "application/octet-stream"; editMetadata.value = props.detail.metadata.map((item) => ({ key: item.key, value: item.value })); editingMetadata.value = true; }
-async function saveMetadata() { if (!props.detail) return; try { await api.replaceObjectMetadata(props.bucket, props.detail.key, editContentType.value, editMetadata.value); editingMetadata.value = false; emit("update:modelValue", false); } catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); } }
+async function saveMetadata() { if (!props.detail || savingMetadata.value) return; savingMetadata.value = true; metadataError.value = ""; try { await api.replaceObjectMetadata(props.bucket, props.detail.key, editContentType.value, editMetadata.value); editingMetadata.value = false; emit("updated", await api.objectDetail(props.bucket, props.detail.key)); emit("update:modelValue", false); } catch (e) { metadataError.value = e instanceof Error ? e.message : String(e); } finally { savingMetadata.value = false; } }
 function archival() { return props.detail?.storage_class === "GLACIER" || props.detail?.storage_class === "DEEP_ARCHIVE"; }
-async function restoreArchive() { if (!props.detail || !confirm("将发起归档对象恢复请求，是否继续？")) return; try { await api.restoreArchivedObject(props.bucket, props.detail.key, restoreDays.value, restoreTier.value); } catch (e) { versionsError.value = e instanceof Error ? e.message : String(e); } }
+async function restoreArchive() { if (!props.detail || props.readOnly || !confirm("将发起归档对象恢复请求，是否继续？")) return; try { await api.restoreArchivedObject(props.bucket, props.detail.key, restoreDays.value, restoreTier.value); restoreMessage.value = "恢复请求已提交，请稍后刷新状态"; } catch (e) { metadataError.value = e instanceof Error ? e.message : String(e); } }
 </script>
 
 <template>
@@ -79,9 +86,9 @@ async function restoreArchive() { if (!props.detail || !confirm("将发起归档
            <dt>客户端加密</dt><dd>{{ detail.client_encryption || "未启用" }}</dd>
         </dl>
         <div v-if="archival()" class="meta-title">归档恢复</div>
-        <div v-if="archival()" class="access-panel"><p>状态：{{ detail.restore_status || "尚未恢复" }}</p><label class="tag-row"><span>保留天数</span><input v-model.number="restoreDays" class="input" type="number" min="1" max="365" /></label><label class="tag-row"><span>恢复速度</span><select v-model="restoreTier" class="select"><option value="Expedited">快速</option><option value="Standard">标准</option><option value="Bulk">批量</option></select></label><button class="btn" @click="restoreArchive">发起恢复</button></div>
+         <div v-if="archival()" class="access-panel"><p>状态：{{ detail.restore_status || "尚未恢复" }}</p><p v-if="restoreMessage" class="success-text">{{ restoreMessage }}</p><template v-if="!readOnly"><label class="tag-row"><span>保留天数</span><input v-model.number="restoreDays" class="input" type="number" min="1" max="365" /></label><label class="tag-row"><span>恢复速度</span><select v-model="restoreTier" class="select"><option value="Expedited">快速</option><option value="Standard">标准</option><option value="Bulk">批量</option></select></label><button class="btn" @click="restoreArchive">发起恢复</button></template></div>
         <div class="meta-title version-head"><span>对象元数据</span><button v-if="!readOnly" class="btn sm" @click="beginMetadataEdit">编辑</button></div>
-        <div v-if="editingMetadata" class="access-panel"><label class="tag-row"><span>Content-Type</span><input v-model="editContentType" class="input" /></label><div v-for="(item, index) in editMetadata" :key="index" class="tag-row"><input v-model="item.key" class="input" placeholder="x-amz-meta-* 名称" /><input v-model="item.value" class="input" placeholder="值" /><button class="btn sm" @click="editMetadata.splice(index, 1)">删除</button></div><div class="tag-actions"><button class="btn sm" @click="editMetadata.push({ key: '', value: '' })">新增元数据</button><button class="btn sm primary" @click="saveMetadata">保存</button></div></div>
+         <div v-if="metadataError" class="version-error">元数据：{{ metadataError }}</div><div v-if="editingMetadata" class="access-panel"><label class="tag-row"><span>Content-Type</span><input v-model="editContentType" class="input" /></label><div v-for="(item, index) in editMetadata" :key="index" class="tag-row"><input v-model="item.key" class="input" placeholder="x-amz-meta-* 名称" /><input v-model="item.value" class="input" placeholder="值" /><button class="btn sm" :disabled="savingMetadata" @click="editMetadata.splice(index, 1)">删除</button></div><div class="tag-actions"><button class="btn sm" :disabled="savingMetadata" @click="editMetadata.push({ key: '', value: '' })">新增元数据</button><button class="btn sm primary" :disabled="savingMetadata" @click="saveMetadata">{{ savingMetadata ? "保存中…" : "保存" }}</button></div></div>
         <div v-if="detail.metadata.length" class="meta-title">自定义元数据</div>
         <dl v-if="detail.metadata.length">
           <template v-for="item in detail.metadata" :key="item.key">
@@ -95,7 +102,7 @@ async function restoreArchive() { if (!props.detail || !confirm("将发起归档
             <span>{{ version.is_delete_marker ? "删除标记" : formatBytes(version.size) }}</span>
             <span>{{ formatTime(version.last_modified) }}</span>
             <span :title="version.version_id">{{ version.is_latest ? "当前版本" : version.version_id }}</span>
-            <button v-if="!version.is_delete_marker && !version.is_latest" class="btn sm" @click="restore(version)">恢复</button>
+             <button v-if="!readOnly && !version.is_delete_marker && !version.is_latest" class="btn sm" @click="restore(version)">恢复</button>
            </div>
            <button v-if="visibleVersionCount < versions.length" class="btn sm" @click="visibleVersionCount += 20">加载更多版本</button>
          </div>
@@ -103,11 +110,11 @@ async function restoreArchive() { if (!props.detail || !confirm("将发起归档
          <div v-if="tagsError" class="version-error">标签读取失败：{{ tagsError }}</div>
          <div v-if="aclError" class="version-error">ACL 读取失败：{{ aclError }}</div>
          <div v-if="accessLoaded" class="access-panel">
-           <div v-for="(tag, index) in tags" :key="index" class="tag-row">
-             <template v-if="!readOnly"><input v-model="tag.key" class="input" placeholder="标签名" /><input v-model="tag.value" class="input" placeholder="标签值" /><button class="btn sm" @click="removeTag(index)">删除</button></template>
+             <div v-for="(tag, index) in tags" :key="index" class="tag-row">
+              <template v-if="!readOnly"><input v-model="tag.key" class="input" :disabled="savingTags" placeholder="标签名" /><input v-model="tag.value" class="input" :disabled="savingTags" placeholder="标签值" /><button class="btn sm" :disabled="savingTags" @click="removeTag(index)">删除</button></template>
              <template v-else><span>{{ tag.key }}</span><span class="muted">{{ tag.value }}</span></template>
            </div>
-           <div v-if="!readOnly" class="tag-actions"><button class="btn sm" @click="addTag">新增标签</button><button class="btn sm primary" @click="saveTags">保存标签</button></div>
+           <div v-if="!tags.length" class="muted">暂无标签</div><div v-if="!readOnly" class="tag-actions"><button class="btn sm" :disabled="savingTags" @click="addTag">新增标签</button><button class="btn sm primary" :disabled="savingTags" @click="saveTags">{{ savingTags ? "保存中…" : "保存标签" }}</button></div>
           <div v-if="acl" class="acl"><b>ACL（只读）</b><div>所有者：{{ acl.owner || "—" }}</div><div v-for="grant in acl.grants" :key="grant">{{ grant }}</div></div>
          </div>
       </div>
@@ -126,6 +133,7 @@ dt { color: var(--muted); } dd { margin: 0; } .break { word-break: break-all; }
 .version-row { display: grid; grid-template-columns: 90px 1fr minmax(100px, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
 .version-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .version-error { color: var(--danger); font-size: 12px; }
+.success-text { color: var(--ok); font-size: 12px; }
 .access-panel { display: grid; gap: 7px; }
 .tag-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; }
 .tag-actions { display: flex; gap: 6px; }
