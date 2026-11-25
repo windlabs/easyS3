@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { watch } from "vue";
 import { useMaskClose, useDialogFocus } from "./useMaskClose";
 
 const props = defineProps<{
@@ -16,10 +15,10 @@ const emit = defineEmits<{
 }>();
 
 const { onMousedown, onClick } = useMaskClose(() =>
-  emit("update:modelValue", false),
+  { if (!props.busy) emit("update:modelValue", false); },
 );
-const { root, onKeydown } = useDialogFocus(() => props.modelValue, () => emit("update:modelValue", false));
-watch(() => props.modelValue, (open) => { if (open) requestAnimationFrame(() => root.value?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)")?.focus()); });
+const { root, onKeydown } = useDialogFocus(() => props.modelValue, () => { if (!props.busy) emit("update:modelValue", false); });
+void root;
 </script>
 
 <template>

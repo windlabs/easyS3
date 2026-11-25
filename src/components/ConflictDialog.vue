@@ -15,7 +15,7 @@ const { onMousedown, onClick } = useMaskClose(() =>
   emit("update:modelValue", false),
 );
 const { root, onKeydown } = useDialogFocus(() => props.modelValue, () => emit("update:modelValue", false));
-watch(() => props.modelValue, (open) => { if (open) requestAnimationFrame(() => root.value?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus()); });
+void root;
 
 // 默认选安全的“保留两者”（规格：三选一；不指定默认值，此为推荐项）
 const policy = ref<ConflictPolicy>("rename");

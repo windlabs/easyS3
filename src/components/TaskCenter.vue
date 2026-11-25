@@ -128,7 +128,7 @@ function toggleFailures(id: string) {
         class="btn sm ghost"
         @click.stop="clearFinished"
       >
-        清除已完成
+         清除已结束
       </button>
       <span class="toggle">{{ tasksStore.open ? "▾" : "▴" }}</span>
     </div>
@@ -159,6 +159,7 @@ function toggleFailures(id: string) {
           <span class="kind">{{ kindLabel[t.kind] }}</span>
           <span class="bucket muted" :title="t.bucket">{{ t.bucket }}</span>
           <span class="status" :class="t.status">{{ statusLabel[t.status] }}</span>
+          <span class="muted" :title="'创建时间'">{{ new Date(t.created_at).toLocaleString() }}</span>
           <span class="spacer" />
           <button
             v-if="t.status === 'running' || t.status === 'queued'"

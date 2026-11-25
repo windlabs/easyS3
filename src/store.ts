@@ -32,6 +32,7 @@ export const browse = reactive({
   loading: false,
   error: "",
 });
+let browseRequestId = 0;
 
 export const selection = reactive(new Set<string>());
 
@@ -47,7 +48,9 @@ export const notifyOnTaskFinish = reactive({ enabled: localStorage.getItem("easy
 export function setNotifyOnTaskFinish(enabled: boolean) { notifyOnTaskFinish.enabled = enabled; localStorage.setItem("easys3.notify-tasks", String(enabled)); }
 async function notifyTaskFinish(task: TaskInfo) {
   if (!notifyOnTaskFinish.enabled || (task.status !== "done" && task.status !== "failed")) return;
-  try { if (!await isPermissionGranted()) await requestPermission(); if (await isPermissionGranted()) sendNotification({ title: "easyS3 任务", body: task.status === "done" ? `${task.kind} 已完成` : `${task.kind} 失败，请查看任务中心` }); } catch { /* 通知不可用不影响任务 */ }
+  const labels: Record<TaskInfo["kind"], string> = { upload: "上传", download: "下载", delete: "删除", copy: "复制/移动", search: "搜索", zip: "打包下载", stats: "用量统计", query: "SQL 查询" };
+  const kind = labels[task.kind];
+  try { if (!await isPermissionGranted()) await requestPermission(); if (await isPermissionGranted()) sendNotification({ title: "easyS3 任务", body: task.status === "done" ? `${kind} 已完成` : `${kind} 失败，请查看任务中心` }); } catch { /* 通知不可用不影响任务 */ }
 }
 
 // 全部任务成功结束后，任务中心自动收起的延时（毫秒）
@@ -121,6 +124,7 @@ export async function switchConnection(id: string) {
 
 export async function enterConnection() {
   const p = currentConnection();
+  browseRequestId += 1;
   selection.clear();
   browse.filter = "";
   if (!p) {
@@ -147,6 +151,7 @@ export async function backToBuckets() {
 }
 
 async function loadBuckets() {
+  browseRequestId += 1;
   browse.mode = "buckets";
   browse.loading = true;
   browse.error = "";
@@ -179,6 +184,8 @@ export async function navigatePrefix(prefix: string) {
 }
 
 async function loadFirstPage() {
+  browseRequestId += 1;
+  browse.loading = false;
   browse.mode = "objects";
   browse.entries = [];
   browse.nextToken = null;
@@ -188,18 +195,20 @@ async function loadFirstPage() {
 
 export async function loadMore() {
   if (browse.loading) return;
+  const requestId = ++browseRequestId;
   browse.loading = true;
   browse.error = "";
   try {
     // 前缀过滤：直接以服务端 prefix 参数过滤（规格：非子串搜索）
     const prefix = browse.prefix + browse.filter;
     const r = await api.listObjects(browse.bucket, prefix, browse.nextToken);
+    if (requestId !== browseRequestId) return;
     browse.entries.push(...r.entries);
     browse.nextToken = r.next_token;
   } catch (e) {
-    browse.error = errorMessage(e);
+    if (requestId === browseRequestId) browse.error = errorMessage(e);
   } finally {
-    browse.loading = false;
+    if (requestId === browseRequestId) browse.loading = false;
   }
 }
 

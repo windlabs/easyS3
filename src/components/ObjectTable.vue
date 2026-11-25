@@ -39,6 +39,7 @@ const sortKey = ref<SortKey>(savedSort?.key ?? "name");
 const sortAsc = ref(savedSort?.asc ?? true);
 const showStorage = ref(localStorage.getItem("easys3.show-storage-column") !== "false");
 const openMore = ref<string | null>(null);
+const gridWrap = ref<HTMLElement | null>(null);
 
 function toggleStorageColumn() {
   showStorage.value = !showStorage.value;
@@ -113,10 +114,16 @@ function onScroll() {
   if (!el || props.loading || !props.hasMore) return;
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) emit("loadMore");
 }
+function onGridScroll() {
+  const el = gridWrap.value;
+  if (!el || props.loading || !props.hasMore) return;
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) emit("loadMore");
+}
 </script>
 
 <template>
-  <div v-if="grid" class="grid-wrap">
+  <div v-if="grid" ref="gridWrap" class="grid-wrap" @scroll.passive="onGridScroll">
+    <div class="grid-toolbar"><input type="checkbox" :checked="allChecked" @change="toggleAll" /> <span>全选当前已加载项 · 双击名称进入文件夹或预览文件</span><span v-if="sorted.length > 1000" class="muted">已加载对象较多，网格视图可能影响性能</span></div>
     <div v-if="loading && !sorted.length" class="grid-state muted">加载中…</div>
     <div v-else-if="!sorted.length" class="grid-state muted"><div>当前目录为空</div><div class="empty-actions"><button v-if="!readOnly" class="btn primary sm" @click="emit('emptyUpload')">上传文件</button><button v-if="!readOnly" class="btn sm" @click="emit('emptyFolder')">新建文件夹</button></div></div>
     <div v-for="e in sorted" :key="e.key" class="grid-item" :class="{ selected: selection.has(e.key) }" @click="toggle(e)">
@@ -202,7 +209,7 @@ function onScroll() {
         <tr v-if="sorted.length > virtualEnd" class="virtual-spacer"><td :colspan="showStorage ? 6 : 5" :style="{ height: ((sorted.length - virtualEnd) * rowHeight) + 'px' }" /></tr>
       </tbody>
     </table>
-    <button class="column-toggle btn sm ghost" @click="toggleStorageColumn">
+    <button class="column-toggle btn sm ghost" title="列显示偏好会自动保存" @click="toggleStorageColumn">
       {{ showStorage ? "隐藏存储类别" : "显示存储类别" }}
     </button>
     <div v-if="loading" class="table-foot muted">加载中…</div>
@@ -303,6 +310,7 @@ function onScroll() {
 }
 .virtual-spacer td { padding: 0; border: 0; }
 .grid-wrap { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 16px; overflow: auto; }
+.grid-toolbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; position: sticky; top: 0; z-index: 2; padding: 6px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12px; }
 .grid-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; min-width: 0; }
 .grid-item.selected, .grid-item:hover { border-color: var(--primary); background: var(--hover); }
 .grid-thumb { display: grid; height: 100px; place-items: center; font-size: 44px; background: var(--header-bg); border-radius: 6px; }

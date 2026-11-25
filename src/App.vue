@@ -70,6 +70,7 @@ const showPreview = ref(false);
 const previewData = ref<PreviewData | null>(null);
 const previewName = ref("");
 const previewKey = ref("");
+const previewSaving = ref(false);
 const showObjectDetail = ref(false);
 const objectDetail = ref<import("./types").ObjectDetail | null>(null);
 const showSettings = ref(false);
@@ -83,6 +84,7 @@ const searchQuery = ref("");
 const searchAcrossBuckets = ref(false);
 const searchResults = ref<SearchEntry[]>([]);
 const searching = ref(false);
+const searchCancelling = ref(false);
 const searchTaskId = ref<string | null>(null);
 const searchError = ref("");
 const inventoryResults = ref<import("./types").InventoryEntry[]>([]);
@@ -215,6 +217,10 @@ function onFilterInput(e: Event) {
   const v = (e.target as HTMLInputElement).value;
   if (filterTimer) clearTimeout(filterTimer);
   filterTimer = setTimeout(() => void store.setFilter(v), 300);
+}
+function clearFilter() {
+  if (filterTimer) clearTimeout(filterTimer);
+  void store.setFilter("");
 }
 
 onMounted(async () => {
@@ -540,13 +546,16 @@ async function preview(entry: Entry) {
   }
 }
 async function savePreviewText(content: string) {
+  if (previewSaving.value) return;
   if (isReadOnly.value) {
     store.toast("当前连接处于只读模式，不能编辑对象", "error");
     return;
   }
   if (!previewName.value || !confirm("将覆盖远端对象，他人此间的修改会被覆盖。是否继续？")) return;
-  try { await api.saveTextObject(store.browse.bucket, store.browse.prefix + previewName.value, content); previewData.value = { kind: "text", content }; await store.refresh(); store.toast("文本已保存"); }
+  previewSaving.value = true;
+  try { await api.saveTextObject(store.browse.bucket, previewKey.value, content); previewData.value = { kind: "text", content }; await store.refresh(); store.toast("文本已保存"); }
   catch (e) { store.toast(errorMessage(e), "error"); }
+  finally { previewSaving.value = false; }
 }
 async function runSelect() { if (!objectDetail.value) return; try { const id = selectFormat.value === "json" ? await api.startSelectJsonObject(store.browse.bucket, objectDetail.value.key, selectExpression.value) : await api.startSelectCsvObject(store.browse.bucket, objectDetail.value.key, selectExpression.value); store.tasksStore.open = true; const unlisten = await listen<import("./types").SelectResult & { id: string; error: string | null }>("query-result", (event) => { if (event.payload.id !== id) return; if (event.payload.error) store.toast(event.payload.error, "error"); else selectResult.value = event.payload; unlisten(); }); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function exportSelectResult(json: boolean) { if (!selectResult.value) return; const path = await (await import("@tauri-apps/plugin-dialog")).save({ title: "导出查询结果", defaultPath: json ? "s3-select-result.json" : "s3-select-result.csv" }); if (!path) return; const content = json ? JSON.stringify({ records: selectResult.value.records, bytes_scanned: selectResult.value.bytes_scanned, bytes_processed: selectResult.value.bytes_processed, bytes_returned: selectResult.value.bytes_returned }, null, 2) : selectResult.value.records; try { await api.exportPresignList(path, [content]); store.toast("查询结果已导出"); } catch (e) { store.toast(errorMessage(e), "error"); } }
@@ -801,12 +810,15 @@ async function runSearch() {
     store.tasksStore.open = true;
     const unlisten = await listen<{ id: string; results: SearchEntry[]; error: string | null }>("search-result", (event) => {
       if (event.payload.id !== id) return;
-       searchResults.value = event.payload.results; searchError.value = event.payload.error || ""; searching.value = false; searchTaskId.value = null; unlisten();
+       searchResults.value = event.payload.results; searchError.value = event.payload.error || ""; searching.value = false; searchCancelling.value = false; searchTaskId.value = null; unlisten();
     });
   }
   catch (e) { searchError.value = errorMessage(e); searching.value = false; searchTaskId.value = null; }
 }
-async function cancelSearch() { if (!searchTaskId.value) return; await store.cancelTask(searchTaskId.value); searching.value = false; searchTaskId.value = null; }
+async function cancelSearch() { if (!searchTaskId.value || searchCancelling.value) return; searchCancelling.value = true; try { await api.cancelTask(searchTaskId.value); } catch (e) { searchError.value = errorMessage(e); searchCancelling.value = false; } }
+watch(() => store.tasksStore.tasks.find((task) => task.id === searchTaskId.value)?.status, (status) => {
+  if (status === "canceled") { searching.value = false; searchCancelling.value = false; searchTaskId.value = null; searchError.value = "搜索已取消"; }
+});
 async function importInventory() { const path = await openDialog({ title: "导入 S3 Inventory CSV", filters: [{ name: "CSV", extensions: ["csv"] }] }); if (!path || Array.isArray(path)) return; try { const count = await api.importInventory(path); store.toast(`已导入 ${count} 条 Inventory 索引`); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function runInventorySearch() { try { inventoryResults.value = await api.searchInventory(searchQuery.value); } catch (e) { store.toast(errorMessage(e), "error"); } }
 async function jumpToInventory(entry: import("./types").InventoryEntry) { if (entry.bucket !== store.browse.bucket) await store.selectBucket(entry.bucket); const slash = entry.key.lastIndexOf("/"); await store.navigatePrefix(slash >= 0 ? entry.key.slice(0, slash + 1) : ""); showSearch.value = false; }
@@ -981,7 +993,7 @@ async function removeBucket() {
            <template v-if="store.browse.mode === 'objects'">
                 <button class="btn" @click="showSearch = true">搜索</button>
                <button class="btn" title="视图偏好会自动保存" @click="toggleGridView">{{ gridView ? "表格视图" : "网格视图" }}</button>
-               <div class="filter-row prefix-filter"><input class="input filter" placeholder="按前缀筛选" :value="store.browse.filter" @input="onFilterInput" /><button v-if="store.browse.filter" class="btn sm ghost" title="清除前缀筛选" @click="store.setFilter('')">清除</button></div>
+               <div class="filter-row prefix-filter"><input class="input filter" placeholder="按前缀筛选" :value="store.browse.filter" @input="onFilterInput" /><button v-if="store.browse.filter" class="btn sm ghost" title="清除前缀筛选" @click="clearFilter">清除</button><span v-if="store.browse.loading" class="muted">加载中…</span></div>
               <button v-if="!isReadOnly" class="btn" @click="pickUpload(false)">上传文件</button>
                <button v-if="!isReadOnly" class="btn" @click="pickUpload(true)">上传文件夹</button>
                 <button v-if="!isReadOnly" class="btn" @click="showFolderDialog = true">新建文件夹</button>
@@ -1028,6 +1040,7 @@ async function removeBucket() {
 
         <div v-if="store.browse.error" class="error-banner">
           {{ store.browse.error }}
+          <button class="btn sm" @click="store.refresh()">重试</button>
         </div>
 
         <ObjectTable
@@ -1109,6 +1122,8 @@ async function removeBucket() {
       <p>
         即将删除 <b>{{ deleteCount }}</b> 个对象（含文件夹内的全部对象）。
       </p>
+      <p>目标桶：<b>{{ store.browse.bucket }}</b></p>
+      <ul v-if="deleteItems.length <= 10"><li v-for="item in deleteItems" :key="item.key">{{ item.key }}</li></ul>
       <p class="warn-text">删除操作不可恢复，请确认。</p>
       <label v-if="store.currentConnection()?.recycle_prefix" class="upload-storage"><input v-model="deleteToRecycle" type="checkbox" /> 移入连接回收站（{{ store.currentConnection()?.recycle_prefix }}）</label>
     </ConfirmDialog>
@@ -1133,7 +1148,7 @@ async function removeBucket() {
       @choose="confirmDownload"
     />
 
-    <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" :read-only="isReadOnly" @save-text="savePreviewText" @download="requestDownload([{ key: previewKey, is_dir: false }])" />
+    <PreviewModal v-model="showPreview" :name="previewName" :data="previewData" :read-only="isReadOnly" :saving="previewSaving" @save-text="savePreviewText" @download="requestDownload([{ key: previewKey, is_dir: false }])" />
      <ObjectDetailModal v-model="showObjectDetail" :detail="objectDetail" :bucket="store.browse.bucket" :read-only="isReadOnly" @updated="onObjectDetailUpdated" />
     <div v-if="showSelect" class="modal-mask"><div class="modal policy-modal"><div class="modal-head">S3 Select</div><div class="modal-body copy-form"><label>输入格式 <select v-model="selectFormat" class="select"><option value="csv">CSV（首行列名）</option><option value="json">JSON Lines</option></select></label><textarea v-model="selectExpression" class="input" /><p class="copy-hint">扫描量可能产生 S3 Select 费用，请确认查询范围与 SQL 条件。</p><button class="btn" @click="runSelect">执行查询</button><p v-if="selectResult" class="muted">扫描 {{ formatBytes(selectResult.bytes_scanned) }} · 处理 {{ formatBytes(selectResult.bytes_processed) }} · 返回 {{ formatBytes(selectResult.bytes_returned) }}</p><pre v-if="selectResult" class="policy-diff">{{ selectResult.records }}</pre></div><div class="modal-foot"><button class="btn" @click="showSelect = false">关闭</button><button class="btn" :disabled="!selectResult" @click="exportSelectResult(false)">导出 CSV</button><button class="btn primary" :disabled="!selectResult" @click="exportSelectResult(true)">导出 JSON</button></div></div></div>
     <SettingsDialog v-model="showSettings" />
@@ -1147,7 +1162,7 @@ async function removeBucket() {
     <div v-if="showCommandPalette" class="modal-mask"><div class="modal command-modal"><div class="modal-head">命令面板 <span class="muted">Ctrl/Cmd+K</span></div><div class="modal-body copy-form"><input v-model="commandQuery" class="input" autofocus placeholder="输入命令名称…" /><button v-for="command in commands" :key="command.label" class="command-row" @click="command.run(); showCommandPalette = false"><span>{{ command.label }}</span><kbd>{{ command.key }}</kbd></button><p class="copy-hint">快捷键：Ctrl/Cmd+R 刷新、Ctrl/Cmd+U 上传、Ctrl/Cmd+F 搜索、Ctrl/Cmd+K 命令面板。</p></div><div class="modal-foot"><button class="btn" @click="showCommandPalette = false">关闭</button></div></div></div>
     <div v-if="showConnectionTransfer" class="modal-mask"><div class="modal transfer-modal"><div class="modal-head">导入 / 导出连接</div><div class="modal-body copy-form"><section><b>导出</b><label><input v-model="includeExportSecrets" type="checkbox" /> 包含凭据（默认脱敏，需妥善保管）</label><input v-if="includeExportSecrets" v-model="connectionTransferPassword" class="input" type="password" placeholder="含凭据导出密码（必填）" /><button class="btn" @click="exportConnectionConfig">导出到文件…</button></section><section><b>导入配置文件</b><input v-model="connectionTransferPassword" class="input" type="password" placeholder="如导入文件加密，请输入密码" /><label><input v-model="importOverwrite" type="checkbox" /> 同名连接覆盖（否则跳过）</label><button class="btn" @click="importConnectionConfig">选择文件导入…</button></section><section><b>AWS CLI profile</b><button class="btn" @click="loadAwsProfiles">读取 ~/.aws/credentials</button><div v-if="awsProfiles.length" class="aws-profiles"><div v-for="profile in awsProfiles" :key="profile.id">{{ profile.name }} · {{ profile.region }}</div><button class="btn primary" @click="saveAwsProfiles">导入全部 profile</button></div></section></div><div class="modal-foot"><button class="btn primary" @click="showConnectionTransfer = false">关闭</button></div></div></div>
 
-     <div v-if="showSearch" class="modal-mask"><div class="modal search-modal"><div class="modal-head">全局搜索与高级过滤</div><div class="modal-body copy-form"><input v-model="searchQuery" class="input" placeholder="例如 size>10MB AND modified>30d AND class=GLACIER" @keyup.enter="runSearch" /><label><input v-model="searchAcrossBuckets" type="checkbox" /> 搜索当前连接的所有桶</label><p class="copy-hint">语法：size&gt;10MB、size&lt;1GB、modified&gt;30d、class=GLACIER；使用 AND 连接。</p><div v-if="searching" class="muted">正在分页搜索，可继续操作其他界面… <button class="btn sm" @click="cancelSearch">取消搜索</button></div><div v-if="searchError" class="version-error">{{ searchError }}</div><section class="search-section"><b>S3 实时搜索结果</b><div v-if="searchResults.length" class="search-results"><button v-for="item in searchResults" :key="`${item.bucket}/${item.key}`" class="search-row" @click="jumpToSearch(item)"><b>{{ item.bucket }}</b><span>{{ item.key }}</span><span>{{ formatBytes(item.size) }}</span></button></div><div v-else-if="!searching && !searchError" class="muted">暂无 S3 搜索结果。</div></section><section class="search-section"><b>本地 Inventory 索引结果</b><div v-if="inventoryResults.length" class="search-results"><button v-for="item in inventoryResults" :key="`inventory-${item.bucket}/${item.key}`" class="search-row" @click="jumpToInventory(item)"><b>{{ item.bucket }}</b><span>{{ item.key }}</span><span>{{ formatBytes(item.size) }}</span></button></div><div v-else class="muted">暂无本地索引结果。</div></section></div><div class="modal-foot"><button class="btn" @click="showSearch = false">关闭</button><button class="btn" @click="importInventory">导入 Inventory CSV</button><button class="btn" @click="runInventorySearch">搜索本地索引</button><button class="btn primary" :disabled="searching" @click="runSearch">搜索 S3</button></div></div></div>
+     <div v-if="showSearch" class="modal-mask"><div class="modal search-modal"><div class="modal-head">全局搜索与高级过滤</div><div class="modal-body copy-form"><input v-model="searchQuery" class="input" placeholder="例如 size>10MB AND modified>30d AND class=GLACIER" @keyup.enter="runSearch" /><label><input v-model="searchAcrossBuckets" type="checkbox" /> 搜索当前连接的所有桶</label><p class="copy-hint">语法：size&gt;10MB、size&lt;1GB、modified&gt;30d、class=GLACIER；使用 AND 连接。</p><div v-if="searching" class="muted">正在分页搜索，可继续操作其他界面… <button class="btn sm" :disabled="searchCancelling || !searchTaskId" @click="cancelSearch">{{ searchCancelling ? "正在取消…" : "取消搜索" }}</button></div><div v-if="searchError" class="version-error">{{ searchError }}</div><section class="search-section"><b>S3 实时搜索结果</b><div v-if="searchResults.length" class="search-results"><button v-for="item in searchResults" :key="`${item.bucket}/${item.key}`" class="search-row" @click="jumpToSearch(item)"><b>{{ item.bucket }}</b><span>{{ item.key }}</span><span>{{ formatBytes(item.size) }}</span></button></div><div v-else-if="!searching && !searchError" class="muted">暂无 S3 搜索结果。</div></section><section class="search-section"><b>本地 Inventory 索引结果</b><div v-if="inventoryResults.length" class="search-results"><button v-for="item in inventoryResults" :key="`inventory-${item.bucket}/${item.key}`" class="search-row" @click="jumpToInventory(item)"><b>{{ item.bucket }}</b><span>{{ item.key }}</span><span>{{ formatBytes(item.size) }}</span></button></div><div v-else class="muted">暂无本地索引结果。</div></section></div><div class="modal-foot"><button class="btn" @click="showSearch = false">关闭</button><button class="btn" @click="importInventory">导入 Inventory CSV</button><button class="btn" @click="runInventorySearch">搜索本地索引</button><button class="btn primary" :disabled="searching" @click="runSearch">搜索 S3</button></div></div></div>
 
     <div v-if="showSyncDialog" class="modal-mask"><div class="modal sync-modal"><div class="modal-head">{{ syncDirection === "upload" ? "本地文件夹同步到 S3" : "S3 前缀同步到本地" }}</div><div class="modal-body copy-form"><p>本地目录：<b class="break">{{ syncLocalDir }}</b></p><p>目标：<b>{{ syncDirection === "upload" ? `${store.browse.bucket}/${store.browse.prefix}` : store.browse.prefix || `${store.browse.bucket} 根目录` }}</b></p><label><input v-model="syncPropagateDelete" type="checkbox" @change="buildSyncPlan" /> 同步删除（默认关闭，需确认后才执行）</label><div v-if="syncPlanning" class="muted">正在生成计划…</div><template v-else-if="syncPlan"><p>计划：新增 <b>{{ syncPlan.create.length }}</b>，更新 <b>{{ syncPlan.update.length }}</b>，删除 <b>{{ syncPlan.delete.length }}</b>，跳过 <b>{{ syncPlan.skipped }}</b>。</p><div class="sync-items"><div v-for="item in [...syncPlan.create, ...syncPlan.update, ...syncPlan.delete].slice(0, 20)" :key="item.source + item.target">{{ item.action }} · {{ item.source }}</div><div v-if="syncPlan.create.length + syncPlan.update.length + syncPlan.delete.length > 20" class="muted">仅显示前 20 项</div></div></template></div><div class="modal-foot"><button class="btn" @click="showSyncDialog = false">关闭</button><button class="btn" :disabled="syncPlanning" @click="buildSyncPlan">重新比较</button><button class="btn primary" :disabled="syncPlanning || !syncPlan" @click="startSync">开始同步</button></div></div></div>
 

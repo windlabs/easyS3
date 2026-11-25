@@ -6,7 +6,7 @@
  * 指针拖出弹窗落到遮罩上再松开，浏览器会把 click 派发到按下与抬起的
  * 最近公共祖先（即遮罩），从而误判为点击遮罩。
  */
-import { ref } from "vue";
+import { ref, watch, onBeforeUnmount } from "vue";
 export function useMaskClose(close: () => void) {
   let startedOnMask = false;
 
@@ -33,7 +33,7 @@ export function useDialogFocus(open: () => boolean, close: () => void) {
   }
   function onKeydown(event: KeyboardEvent) {
     if (!open()) return;
-    if (event.key === "Escape") { event.preventDefault(); close(); return; }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
     if (event.key !== "Tab") return;
     const items = focusables();
     if (!items.length) return;
@@ -47,6 +47,8 @@ export function useDialogFocus(open: () => boolean, close: () => void) {
     previous = document.activeElement as HTMLElement | null;
     requestAnimationFrame(() => focusables()[0]?.focus());
   }
-  function onClose() { requestAnimationFrame(() => previous?.focus()); }
+  function onClose() { const target = previous; previous = null; requestAnimationFrame(() => { if (target?.isConnected) target.focus(); }); }
+  watch(open, (value) => { if (value) onOpen(); else onClose(); });
+  onBeforeUnmount(() => { previous = null; });
   return { root, onKeydown, onOpen, onClose };
 }

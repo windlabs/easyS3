@@ -204,7 +204,7 @@ function close() {
 
 const { onMousedown, onClick } = useMaskClose(close);
 const { root, onKeydown } = useDialogFocus(() => props.modelValue, close);
-watch(() => props.modelValue, (open) => { if (open) requestAnimationFrame(() => root.value?.querySelector<HTMLElement>("input:not(:disabled), button:not(:disabled)")?.focus()); });
+void root;
 </script>
 
 <template>

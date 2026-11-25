@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import type { PreviewData } from "../types";
-import { useMaskClose } from "./useMaskClose";
+import { useMaskClose, useDialogFocus } from "./useMaskClose";
 
 const props = defineProps<{
   modelValue: boolean;
   name: string;
   data: PreviewData | null;
   readOnly?: boolean;
+  saving?: boolean;
 }>();
 
 const emit = defineEmits<{ "update:modelValue": [v: boolean]; saveText: [content: string]; download: [] }>();
@@ -19,6 +20,8 @@ watch(() => props.data, (data) => { editMode.value = false; editContent.value = 
 const { onMousedown, onClick } = useMaskClose(() =>
   emit("update:modelValue", false),
 );
+const { root, onKeydown } = useDialogFocus(() => props.modelValue, () => emit("update:modelValue", false));
+void root;
 
 // ---------- 图片 / PDF / 音视频：base64 data URL 内嵌，不经临时文件 ----------
 
@@ -156,11 +159,11 @@ const mdBlocks = computed(() =>
 
 <template>
   <div v-if="modelValue" class="modal-mask" @mousedown="onMousedown" @click="onClick">
-    <div class="modal preview-modal">
+    <div ref="root" class="modal preview-modal" @keydown="onKeydown">
       <div class="modal-head preview-head">
         <span class="name" :title="name">{{ name }}</span>
-         <button v-if="textEditable && !readOnly" class="btn ghost sm" @click="editMode = !editMode">{{ editMode ? "预览" : "编辑" }}</button>
-         <button class="btn ghost sm" @click="emit('download')">下载</button>
+        <button v-if="textEditable && !readOnly" class="btn ghost sm" :disabled="saving" @click="editMode = !editMode">{{ editMode ? "预览" : "编辑" }}</button>
+         <button class="btn ghost sm" title="下载到本地，可选择保存位置和同名处理方式" @click="emit('download')">下载</button>
         <button class="btn ghost sm" @click="emit('update:modelValue', false)">
           关闭
         </button>
@@ -195,7 +198,7 @@ const mdBlocks = computed(() =>
         <pre v-else-if="data?.kind === 'text'" class="code-view"><span v-for="(tokens, i) in codeRenderLines" :key="i" class="code-line"><span v-for="(t, j) in tokens" :key="j" :class="t.cls">{{ t.text }}</span>
 </span><span v-if="codeTruncated" class="truncated-tip">… 内容过长，仅显示前 {{ MAX_RENDER_LINES }} 行，请下载查看完整内容</span></pre>
       </div>
-      <div v-if="editMode" class="modal-foot"><button class="btn" @click="editMode = false">取消</button><button class="btn primary" @click="emit('saveText', editContent)">保存并覆盖</button></div>
+      <div v-if="editMode" class="modal-foot"><button class="btn" :disabled="saving" @click="editMode = false">取消</button><button class="btn primary" :disabled="saving" @click="emit('saveText', editContent)">{{ saving ? "保存中…" : "保存并覆盖" }}</button></div>
     </div>
   </div>
 </template>
